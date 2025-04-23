@@ -79,11 +79,10 @@ class MultiClassOneVsRestSCLoss(nn.Module):
     """
     멀티 클래스 분류에 대해 클래스별로 BinarySCLoss를 적용하여 평균
     """
-    def __init__(self, k: int = 2, alpha: float = 1.0,target_classes:list =[1,2],reverse_baground=False):
+    def __init__(self, k: int = 2, alpha: float = 1.0,target_classes:list =[1,2]):
         super().__init__()
         self.sc_loss = BinarySCLoss(k=k, alpha=alpha)
         self.target_classes = target_classes
-        self.reverse_baground = reverse_baground
 
     def forward(self, pred: Tensor, target: Tensor) -> Tensor:
         """
