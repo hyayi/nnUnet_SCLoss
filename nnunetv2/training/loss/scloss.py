@@ -57,8 +57,8 @@ class BinarySCLoss(nn.Module):
             joint_prob = (center_pred * unfold_pred)
             label_product = center_target * unfold_target
             mutual = F.binary_cross_entropy_with_logits(joint_prob,label_product,reduction='none')
-            if torch.isnan(mutual).any():
-                print(f"label_product {torch.isnan(label_product).any()} joint_prob {torch.isnan(joint_prob.sigmoid()).any()} center_pred {torch.isnan(center_pred).any()},unfold_pred {torch.isnan(unfold_pred).any()}")
+            # if torch.isnan(mutual).any():
+            #     print(f"label_product {torch.isnan(label_product).any()} joint_prob {torch.isnan(joint_prob.sigmoid()).any()} center_pred {torch.isnan(center_pred).any()},unfold_pred {torch.isnan(unfold_pred).any()}")
             # pairwise 계산
             pairwise = torch.exp(-center_pred.sigmoid() * unfold_pred.sigmoid())  # [B, P, H*W]
             # dot = (center_pred * unfold_pred)
