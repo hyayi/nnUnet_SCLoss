@@ -59,8 +59,6 @@ class soft_cldice(nn.Module):
 
     def forward(self, y_true, y_pred):
         if self.exclude_background:
-            print(y_true.shape)
-            print(y_pred.shape)
             y_true = y_true[:, 1:, :, :]
             y_pred = y_pred[:, 1:, :, :]
         skel_pred = self.soft_skeletonize(y_pred)
@@ -82,8 +80,12 @@ class ClDiceLoss(nn.Module):
 
     def forward(self, y_true, y_pred):
         if self.exclude_background:
-            y_true = y_true[:, 1:, :, :]
-            y_pred = y_pred[:, 1:, :, :]
+            if y_true.shape[1] == 1:
+                y_true = y_true[:, 1:2, :, :]
+                y_pred = y_pred[:, 1:2, :, :]
+            else :
+                y_true = y_true[:, 1:, :, :]
+                y_pred = y_pred[:, 1:, :, :]
         skel_pred = self.soft_skeletonize(y_pred)
         skel_true = self.soft_skeletonize(y_true)
         tprec = (torch.sum(torch.multiply(skel_pred, y_true))+self.smooth)/(torch.sum(skel_pred)+self.smooth)    
