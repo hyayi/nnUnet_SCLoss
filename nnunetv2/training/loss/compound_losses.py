@@ -404,7 +404,7 @@ class DC_and_CE_Clloss(nn.Module):
         :param weight_ce:
         :param weight_dice:
         """
-        super(DC_and_CE_SCloss, self).__init__()
+        super(DC_and_CE_Clloss, self).__init__()
         if ignore_label is not None:
             ce_kwargs['ignore_index'] = ignore_label
 
@@ -505,7 +505,7 @@ class CE_Clloss(nn.Module):
         :param weight_ce:
         :param weight_dice:
         """
-        super(DC_and_CE_SCloss, self).__init__()
+        super(CE_Clloss, self).__init__()
         if ignore_label is not None:
             ce_kwargs['ignore_index'] = ignore_label
 
