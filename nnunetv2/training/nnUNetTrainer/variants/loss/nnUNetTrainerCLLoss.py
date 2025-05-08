@@ -49,10 +49,26 @@ class nnUNetTrainerDCCECLLoss(nnUNetTrainer):
                                 'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
                                 {},
                                 {'iter_': 2,'smooth': 1.0,'exclude_background': True,},
-                                weight_ce=1, weight_dice=1, ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+                                weight_ce=1, weight_dice=1, weight_cl=1, ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
         if self._do_i_compile():
             loss.dc = torch.compile(loss.dc)
+
+        if self.enable_deep_supervision:
+            deep_supervision_scales = self._get_deep_supervision_scales()
+            weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
+            if self.is_ddp and not self._do_i_compile():
+                weights[-1] = 1e-6
+            else:
+                weights[-1] = 0
+            weights = weights / weights.sum()
+            loss = DeepSupervisionWrapper(loss, weights)
+
+        return loss
+
+class nnUNetTrainerCECLLoss(nnUNetTrainer):
+    def _build_loss(self):
+        loss = CE_Clloss({},{'iter_': 2,'smooth': 1.0,'exclude_background': True,},weight_ce=1,weight_cl=1,ignore_label=self.label_manager.ignore_label,)
 
         if self.enable_deep_supervision:
             deep_supervision_scales = self._get_deep_supervision_scales()
