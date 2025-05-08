@@ -59,6 +59,8 @@ class soft_cldice(nn.Module):
 
     def forward(self, y_true, y_pred):
         if self.exclude_background:
+            print(y_true.shape)
+            print(y_pred.shape)
             y_true = y_true[:, 1:, :, :]
             y_pred = y_pred[:, 1:, :, :]
         skel_pred = self.soft_skeletonize(y_pred)
