@@ -72,7 +72,7 @@ class soft_cldice(nn.Module):
 
 class ClDiceLoss(nn.Module):
     def __init__(self, iter_=3, smooth = 1., exclude_background=False):
-        super(soft_dice_cldice, self).__init__()
+        super(ClDiceLoss, self).__init__()
         self.iter = iter_
         self.smooth = smooth
         self.soft_skeletonize = SoftSkeletonize(num_iter=10)
