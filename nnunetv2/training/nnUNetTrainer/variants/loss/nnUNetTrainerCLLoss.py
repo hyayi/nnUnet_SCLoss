@@ -7,7 +7,7 @@ from nnunetv2.training.loss.dice import MemoryEfficientSoftDiceLoss
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.helpers import softmax_helper_dim1
 from nnunetv2.training.loss.scloss import MultiClassOneVsRestSCLoss
-iter_=3, smooth = 1., exclude_background=False
+
 
 class nnUNetTrainerDCCLLoss(nnUNetTrainer):
     def _build_loss(self):
