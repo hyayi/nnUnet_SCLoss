@@ -80,6 +80,8 @@ class ClDiceLoss(nn.Module):
 
     def forward(self, y_true, y_pred):
         if self.exclude_background:
+            print(y_true.shape)
+            print(y_pred.shape)
             if y_true.shape[1] == 1:
                 y_true = y_true[:, 1:2, :, :]
                 y_pred = y_pred[:, 1:2, :, :]
