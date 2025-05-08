@@ -45,7 +45,7 @@ class nnUNetTrainerDCCLLoss(nnUNetTrainer):
 
 class nnUNetTrainerDCCECLLoss(nnUNetTrainer):
     def _build_loss(self):
-        loss = DC_and_CE_SCloss({'batch_dice': self.configuration_manager.batch_dice,
+        loss = DC_and_CE_Clloss({'batch_dice': self.configuration_manager.batch_dice,
                                 'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
                                 {},
                                 {'iter_': 2,'smooth': 1.0,'exclude_background': True,},
