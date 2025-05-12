@@ -614,7 +614,8 @@ class nnUNetPredictor(object):
                         break
                     workon, sl = item
                     prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
-
+                    if torch.any(torch.isinf(prediction)):
+                        raise RuntimeError('prediction nan')
                     if self.use_gaussian:
                         prediction *= gaussian
                     predicted_logits[sl] += prediction
