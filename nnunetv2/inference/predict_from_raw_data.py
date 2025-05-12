@@ -652,7 +652,7 @@ class nnUNetPredictor(object):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False
         # is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        with torch.autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
+        with torch.autocast(self.device.type, enabled=False) if self.device.type == 'cuda' else dummy_context():
             assert input_image.ndim == 4, 'input_image must be a 4D np.ndarray or torch.Tensor (c, x, y, z)'
 
             if self.verbose:
