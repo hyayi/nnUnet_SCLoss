@@ -35,7 +35,7 @@ dependencies = [
     "dynamic-network-architectures>=0.3.1,<0.4",  # 0.3.1 and lower are supported, 0.4 may have breaking changes. Let's be careful here
     "tqdm",
     "dicom2nifti",
-    "scipy",
+    "scipy==1.15.2",
     "batchgenerators>=0.25.1",
     "numpy>=1.24,<2",
     "scikit-learn",
