@@ -19,7 +19,7 @@ class nnUNetTrainerDCCLLoss(nnUNetTrainer):
                 'ddp': self.is_ddp
             },
             cl_kwargs={
-                'iter_': 2,
+                'iter_': 10,
                 'smooth': 1.0,
                 'exclude_background': True,
             },
