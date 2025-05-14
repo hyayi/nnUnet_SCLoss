@@ -218,3 +218,37 @@ class nnUNetTrainerDCCLLossK5wegiht03(nnUNetTrainer):
             loss = DeepSupervisionWrapper(loss, weights)
 
         return loss
+
+class nnUNetTrainerDCCLLossK5wegiht02(nnUNetTrainer):
+    def _build_loss(self):
+        loss = DC_Clloss(
+            soft_dice_kwargs={
+                'batch_dice': self.configuration_manager.batch_dice,
+                'do_bg': False,
+                'smooth': 1e-5,
+                'ddp': self.is_ddp
+            },
+            cl_kwargs={
+                'iter_': 5,
+                'smooth': 1.0,
+                'exclude_background': True,
+            },
+            weight_dice=0.8,
+            weight_cl=0.2,
+            dice_class=MemoryEfficientSoftDiceLoss
+        )
+
+        if self._do_i_compile():
+            loss.dc = torch.compile(loss.dc)
+
+        if self.enable_deep_supervision:
+            deep_supervision_scales = self._get_deep_supervision_scales()
+            weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
+            if self.is_ddp and not self._do_i_compile():
+                weights[-1] = 1e-6
+            else:
+                weights[-1] = 0
+            weights = weights / weights.sum()
+            loss = DeepSupervisionWrapper(loss, weights)
+
+        return loss
