@@ -598,7 +598,7 @@ class nnUNetPredictor(object):
 
             if self.use_gaussian:
                 gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
-                                            value_scaling_factor=5,
+                                            value_scaling_factor=10,
                                             device=results_device)
             else:
                 gaussian = 1
