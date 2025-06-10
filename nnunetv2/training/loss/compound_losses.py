@@ -4,6 +4,7 @@ from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss, TopKLo
 from nnunetv2.training.loss.scloss import BinarySCLoss,MultiClassOneVsRestSCLoss
 from nnunetv2.utilities.helpers import softmax_helper_dim1
 from nnunetv2.training.loss.cldice import ClDiceLoss
+from nnunetv2.training.loss.topoloss import WassersteinLoss,BettiMatchingLoss
 from torch import nn
 from torch import Tensor
 
@@ -541,3 +542,34 @@ class CE_Clloss(nn.Module):
 
         result = self.weight_ce * ce_loss + self.weight_cl *cl_loss
         return result
+
+class DC_and_BettiMatchingLoss(nn.Module):
+    def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,
+                 dice_class=None, relative=True, filtration='superlevel'):
+        super().__init__()
+        self.weight_dice = weight_dice
+        self.weight_topo = weight_topo
+
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.topo = BettiMatchingLoss(relative=relative, filtration=filtration)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        dc_loss = self.dc(net_output, target)
+        topo_loss = self.topo(net_output, target)
+        return self.weight_dice * dc_loss + self.weight_topo * topo_loss
+
+
+class DC_and_WassersteinLoss(nn.Module):
+    def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,
+                 dice_class=None, relative=False, filtration='superlevel', dimensions=[0, 1]):
+        super().__init__()
+        self.weight_dice = weight_dice
+        self.weight_topo = weight_topo
+
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.topo = WassersteinLoss(relative=relative, filtration=filtration, dimensions=dimensions)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        dc_loss = self.dc(net_output, target)
+        topo_loss = self.topo(net_output, target)
+        return self.weight_dice * dc_loss + self.weight_topo * topo_loss
