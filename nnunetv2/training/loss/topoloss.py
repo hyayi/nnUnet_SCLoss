@@ -1,6 +1,6 @@
 import torch
 from BettiMatching import *
-from torch.nn as nn
+import torch.nn as nn
 
 def compute_BettiMatchingLoss(t, softmax=True, relative=False, comparison='union', filtration='superlevel', construction='V'):
     if softmax:
