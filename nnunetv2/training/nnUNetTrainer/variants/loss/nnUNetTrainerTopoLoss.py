@@ -24,13 +24,13 @@ class nnUNetTrainerDCBettiLoss(nnUNetTrainer):
             dice_class=MemoryEfficientSoftDiceLoss
         )
 
-        if self._do_i_compile():
-            loss.dc = torch.compile(loss.dc)
+        # if self._do_i_compile():
+        #     loss.dc = torch.compile(loss.dc)
 
         if self.enable_deep_supervision:
             deep_supervision_scales = self._get_deep_supervision_scales()
             weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
-            if self.is_ddp and not self._do_i_compile():
+            if self.is_ddp:
                 weights[-1] = 1e-6
             else:
                 weights[-1] = 0
@@ -56,13 +56,13 @@ class nnUNetTrainerDCWassersteinLoss(nnUNetTrainer):
             dice_class=MemoryEfficientSoftDiceLoss
         )
 
-        if self._do_i_compile():
-            loss.dc = torch.compile(loss.dc)
+        # if self._do_i_compile():
+        #     loss.dc = torch.compile(loss.dc)
 
         if self.enable_deep_supervision:
             deep_supervision_scales = self._get_deep_supervision_scales()
             weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
-            if self.is_ddp and not self._do_i_compile():
+            if self.is_ddp
                 weights[-1] = 1e-6
             else:
                 weights[-1] = 0
