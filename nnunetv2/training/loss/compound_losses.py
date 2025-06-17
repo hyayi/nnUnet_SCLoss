@@ -553,7 +553,7 @@ class DC_and_BettiMatchingLoss(nn.Module):
         self.weight_topo = weight_topo
 
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
-        self.topo = BettiMatchingLoss(softmax=True,use_base_loss=False)
+        self.topo = BettiMatchingLoss(softmax=True,use_base_loss=False,num_processes=4)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
         dc_loss = self.dc(net_output, target)
@@ -576,7 +576,7 @@ class DC_and_WassersteinLoss(nn.Module):
         self.weight_topo = weight_topo
 
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
-        self.topo = HutopoLoss(softmax=True,use_base_loss=False)
+        self.topo = HutopoLoss(softmax=True,use_base_loss=False,num_processes=2)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
         dc_loss = self.dc(net_output, target)
