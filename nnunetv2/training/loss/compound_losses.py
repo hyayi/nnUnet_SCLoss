@@ -4,9 +4,11 @@ from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss, TopKLo
 from nnunetv2.training.loss.scloss import BinarySCLoss,MultiClassOneVsRestSCLoss
 from nnunetv2.utilities.helpers import softmax_helper_dim1
 from nnunetv2.training.loss.cldice import ClDiceLoss
-from nnunetv2.training.loss.topoloss import WassersteinLoss,BettiMatchingLoss
 from torch import nn
 from torch import Tensor
+from topolosses.losses.hutopo import HutopoLoss
+from topolosses.losses.betti_matching import BettiMatchingLoss
+import torch.nn.functional as F
 
 class DC_and_CE_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
@@ -545,31 +547,35 @@ class CE_Clloss(nn.Module):
 
 class DC_and_BettiMatchingLoss(nn.Module):
     def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,
-                 dice_class=None, relative=True, filtration='superlevel'):
+                 dice_class=None):
         super().__init__()
         self.weight_dice = weight_dice
         self.weight_topo = weight_topo
 
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
-        self.topo = BettiMatchingLoss(relative=relative, filtration=filtration)
+        self.topo = BettiMatchingLoss(softmax=True,use_base_loss=False)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1])
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         dc_loss = self.dc(net_output, target)
-        topo_loss = self.topo(net_output, target)
+        topo_loss = self.topo(net_output, target_onehot)
         return self.weight_dice * dc_loss + self.weight_topo * topo_loss
 
 
 class DC_and_WassersteinLoss(nn.Module):
     def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,
-                 dice_class=None, relative=False, filtration='superlevel', dimensions=[0, 1]):
+                 dice_class=None):
         super().__init__()
         self.weight_dice = weight_dice
         self.weight_topo = weight_topo
 
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
-        self.topo = WassersteinLoss(relative=relative, filtration=filtration, dimensions=dimensions)
+        self.topo = HutopoLoss(softmax=True,use_base_loss=False)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1])
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         dc_loss = self.dc(net_output, target)
-        topo_loss = self.topo(net_output, target)
+        topo_loss = self.topo(net_output, target_onehot)
         return self.weight_dice * dc_loss + self.weight_topo * topo_loss
