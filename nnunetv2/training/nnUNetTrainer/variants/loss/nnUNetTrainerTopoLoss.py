@@ -17,8 +17,6 @@ class nnUNetTrainerDCBettiLoss(nnUNetTrainer):
                 'smooth': 1e-5,
                 'ddp': self.is_ddp
             },
-            relative=True,
-            filtration='superlevel',
             weight_dice=1.0,
             weight_topo=1.0,
             dice_class=MemoryEfficientSoftDiceLoss
@@ -48,9 +46,6 @@ class nnUNetTrainerDCWassersteinLoss(nnUNetTrainer):
                 'smooth': 1e-5,
                 'ddp': self.is_ddp
             },
-            relative=False,
-            filtration='superlevel',
-            dimensions=[0, 1],
             weight_dice=1.0,
             weight_topo=1.0,
             dice_class=MemoryEfficientSoftDiceLoss
