@@ -556,10 +556,15 @@ class DC_and_BettiMatchingLoss(nn.Module):
         self.topo = BettiMatchingLoss(softmax=True,use_base_loss=False)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
-        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1])
-        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         dc_loss = self.dc(net_output, target)
+
+        if target.ndim == net_output.ndim:
+            assert target.shape[1] == 1
+            target = target[:, 0]
+        target_onehot = F.one_hot(target[:, 0].long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         topo_loss = self.topo(net_output, target_onehot)
+        
         return self.weight_dice * dc_loss + self.weight_topo * topo_loss
 
 
@@ -574,8 +579,13 @@ class DC_and_WassersteinLoss(nn.Module):
         self.topo = HutopoLoss(softmax=True,use_base_loss=False)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
-        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1])
-        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         dc_loss = self.dc(net_output, target)
+
+        if target.ndim == net_output.ndim:
+            assert target.shape[1] == 1
+            target = target[:, 0]
+        target_onehot = F.one_hot(target[:, 0].long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         topo_loss = self.topo(net_output, target_onehot)
+        
         return self.weight_dice * dc_loss + self.weight_topo * topo_loss
