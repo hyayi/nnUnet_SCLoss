@@ -217,6 +217,121 @@ class nnUNetDataLoader(DataLoader):
 
         return {'data': data_all, 'target': seg_all, 'keys': selected_keys}
 
+class nnUNetDataLoaderWeight(nnUNetDataLoader):
+    def determine_shapes(self):
+        # load one case
+        data, seg, weight, class_weight, skelen, seg_prev, properties = self._data.load_case(self._data.identifiers[0])
+
+        # image shape
+        num_color_channels = data.shape[0]
+        data_shape = (self.batch_size, num_color_channels, *self.patch_size)
+
+        # segmentation shape
+        channels_seg = seg.shape[0]
+        if seg_prev is not None:
+            channels_seg += 1
+        seg_shape = (self.batch_size, channels_seg, *self.patch_size)
+
+        # weight shape (assume weight.shape = (C, *spatial))
+        weight_shape = (self.batch_size, weight.shape[0], *self.patch_size)
+        class_weight_shape = (self.batch_size, class_weight.shape[0], *self.patch_size)
+        skelen_shape = (self.batch_size, skelen.shape[0], *self.patch_size)
+
+        return data_shape, seg_shape, weight_shape, class_weight_shape, skelen_shape
+     
+def generate_train_batch(self):
+    selected_keys = self.get_indices()
+
+    # preallocate memory
+    data_all = np.zeros(self.data_shape, dtype=np.float32)
+    seg_all = np.zeros(self.seg_shape, dtype=np.int16)
+    weight_all = np.zeros(self.weight_shape, dtype=np.float32)
+    class_weight_all = np.zeros(self.class_weight_shape, dtype=np.float32)
+    skelen_all = np.zeros(self.skelen_shape, dtype=np.float32)
+
+    for j, i in enumerate(selected_keys):
+        force_fg = self.get_do_oversample(j)
+
+        # load case
+        data, seg, weight, class_weight, skelen, seg_prev, properties = self._data.load_case(i)
+        shape = data.shape[1:]
+
+        bbox_lbs, bbox_ubs = self.get_bbox(shape, force_fg, properties['class_locations'])
+        bbox = [[lb, ub] for lb, ub in zip(bbox_lbs, bbox_ubs)]
+
+        # crop and pad all components
+        data_all[j] = crop_and_pad_nd(data, bbox, 0)
+
+        seg_cropped = crop_and_pad_nd(seg, bbox, -1)
+        if seg_prev is not None:
+            seg_cropped = np.vstack((seg_cropped, crop_and_pad_nd(seg_prev, bbox, -1)[None]))
+        seg_all[j] = seg_cropped
+
+        weight_all[j] = crop_and_pad_nd(weight, bbox, 0)
+        class_weight_all[j] = crop_and_pad_nd(class_weight, bbox, 0)
+        skelen_all[j] = crop_and_pad_nd(skelen, bbox, 0)
+
+    if self.patch_size_was_2d:
+        data_all = data_all[:, :, 0]
+        seg_all = seg_all[:, :, 0]
+        weight_all = weight_all[:, :, 0]
+        class_weight_all = class_weight_all[:, :, 0]
+        skelen_all = skelen_all[:, :, 0]
+
+    if self.transforms is not None:
+        with torch.no_grad():
+            with threadpool_limits(limits=1, user_api=None):
+                data_all = torch.from_numpy(data_all).float()
+                seg_all = torch.from_numpy(seg_all).to(torch.int16)
+                weight_all = torch.from_numpy(weight_all).float()
+                class_weight_all = torch.from_numpy(class_weight_all).float()
+                skelen_all = torch.from_numpy(skelen_all).float()
+
+                images, segs, weights, class_weights, skelens = [], [], [], [], []
+
+                for b in range(self.batch_size):
+                    tmp = self.transforms(**{
+                        'image': data_all[b],
+                        'segmentation': seg_all[b],
+                        'weight': weight_all[b],
+                        'class_weight': class_weight_all[b],
+                        'skelen': skelen_all[b],
+                    })
+                    images.append(tmp['image'])
+                    segs.append(tmp['segmentation'])
+                    weights.append(tmp['weight'])
+                    class_weights.append(tmp['class_weight'])
+                    skelens.append(tmp['skelen'])
+
+                data_all = torch.stack(images)
+                weight_all = torch.stack(weights)
+                class_weight_all = torch.stack(class_weights)
+                skelen_all = torch.stack(skelens)
+
+                if isinstance(segs[0], list):
+                    seg_all = [torch.stack([s[i] for s in segs]) for i in range(len(segs[0]))]
+                else:
+                    seg_all = torch.stack(segs)
+
+                del images, segs, weights, class_weights, skelens
+
+        return {
+            'data': data_all,
+            'target': seg_all,
+            'weight': weight_all,
+            'class_weight': class_weight_all,
+            'skelen': skelen_all,
+            'keys': selected_keys
+        }
+
+    return {
+        'data': data_all,
+        'target': seg_all,
+        'weight': weight_all,
+        'class_weight': class_weight_all,
+        'skelen': skelen_all,
+        'keys': selected_keys
+    }
 
 if __name__ == '__main__':
     folder = join(nnUNet_preprocessed, 'Dataset002_Heart', 'nnUNetPlans_3d_fullres')
