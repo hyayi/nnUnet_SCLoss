@@ -304,14 +304,17 @@ def generate_train_batch(self):
                     skelens.append(tmp['skelen'])
 
                 data_all = torch.stack(images)
-                weight_all = torch.stack(weights)
-                class_weight_all = torch.stack(class_weights)
-                skelen_all = torch.stack(skelens)
 
                 if isinstance(segs[0], list):
                     seg_all = [torch.stack([s[i] for s in segs]) for i in range(len(segs[0]))]
+                    skelen_all = [torch.stack([sk[i] for sk in skelens]) for i in range(len(skelens[0]))]
+                    weight_all = [torch.stack([w[i] for w in weights]) for i in range(len(weights[0]))]
+                    class_weight_all = [torch.stack([cw for cw in class_weights]) for i in range(len(segs[0]))]
                 else:
                     seg_all = torch.stack(segs)
+                    weight_all = torch.stack(weights)
+                    class_weight_all = torch.stack(class_weights)
+                    skelen_all = torch.stack(skelens)
 
                 del images, segs, weights, class_weights, skelens
 
@@ -323,15 +326,6 @@ def generate_train_batch(self):
             'skelen': skelen_all,
             'keys': selected_keys
         }
-
-    return {
-        'data': data_all,
-        'target': seg_all,
-        'weight': weight_all,
-        'class_weight': class_weight_all,
-        'skelen': skelen_all,
-        'keys': selected_keys
-    }
 
 if __name__ == '__main__':
     folder = join(nnUNet_preprocessed, 'Dataset002_Heart', 'nnUNetPlans_3d_fullres')

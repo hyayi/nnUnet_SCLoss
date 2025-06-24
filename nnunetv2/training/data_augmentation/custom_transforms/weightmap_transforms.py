@@ -18,7 +18,7 @@ from batchgeneratorsv2.transforms.base.basic_transform import SegOnlyTransform
 from torch.nn.functional import interpolate
 
 
-class DownsampleSegForDSTransformWeight(SegOnlyTransform):
+class DownsampleSegForDSTransformWeight(BasicTransform):
     def __init__(self, ds_scales: Union[List, Tuple]):
         super().__init__()
         self.ds_scales = ds_scales
@@ -28,10 +28,7 @@ class DownsampleSegForDSTransformWeight(SegOnlyTransform):
 
         if data_dict.get('weight') is not None:
             data_dict['weight'] = self._apply_to_weight(data_dict['weight'], **params)
-
-        if data_dict.get('class_weight') is not None:
-            data_dict['class_weight'] = self._apply_to_class_weight(data_dict['class_weight'], **params)
-
+            
         if data_dict.get('skelen') is not None:
             data_dict['skelen'] = self._apply_to_skelen(data_dict['skelen'], **params)
 
@@ -69,9 +66,6 @@ class DownsampleSegForDSTransformWeight(SegOnlyTransform):
         return results
     def _apply_to_weight(self, weight, **params) -> List[torch.Tensor]:
        return self._apply_continuous_tensor(weight, **params)
-    
-    def _apply_to_class_weight(self, class_weight, **params) -> List[torch.Tensor]:
-        return self._apply_continuous_tensor(class_weight, **params)
     
     def _apply_to_skelen(self, skelen, **params) -> List[torch.Tensor]:
         return self._apply_to_segmentation(skelen, **params)
