@@ -72,8 +72,6 @@ class nnUNetTrainerSkeaTopo2(nnUNetTrainer):
 
             self.loss = self._build_loss()
 
-            self.dataset_class = nnUNetDatasetNumpyWeight
-
             # torch 2.2.2 crashes upon compiling CE loss
             # if self._do_i_compile():
             #     self.loss = torch.compile(self.loss)
@@ -136,8 +134,7 @@ class nnUNetTrainerSkeaTopo2(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             # del data
-            l = self.loss(output, target,weight_maps=weight, class_weight=class_weight, label_skelen=skelen, eps = eps, method=method, step=step, epoch=epoch, d_iter=d_iter)
-
+            l = self.loss(output, target, weight, class_weight, skelen, eps, method, step, epoch, d_iter)
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
             self.grad_scaler.unscale_(self.optimizer)
@@ -187,7 +184,7 @@ class nnUNetTrainerSkeaTopo2(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             del data
-            l = self.loss(output, target,weight_maps=weight, class_weight=class_weight, label_skelen=skelen, eps = eps, method=method, step=step, epoch=epoch, d_iter=d_iter)
+            l = self.loss(output, target, weight, class_weight, skelen, eps, method, step, epoch, d_iter)
 
         # we only need the output with the highest output resolution (if DS enabled)
         if self.enable_deep_supervision:

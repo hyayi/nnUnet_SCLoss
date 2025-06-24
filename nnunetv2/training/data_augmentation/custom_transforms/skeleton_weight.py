@@ -129,7 +129,7 @@ class SkeletonAwareWeight():
             idx_num = np.count_nonzero(mask == class_idx)
             class_weight[class_idx, 0] = idx_num
         min_num = np.amin(class_weight)
-        class_weight = class_weight * 1.0 / min_num
+        class_weight = class_weight * 1.0 / (min_num + 1e-6)
         class_weight = np.sum(class_weight) - class_weight        
         
         

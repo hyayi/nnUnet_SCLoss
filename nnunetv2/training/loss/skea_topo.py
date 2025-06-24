@@ -201,7 +201,7 @@ class WeightMapBortLoss(nn.Module):
         label_fore_skelen = label_skelen[:, 1, :, :]
 
         # FFP, TFP, FFN, TFN calc
-        print('epoch ', epoch, ' step ', step, ' d_iter ', d_iter, ' lamda ', self.epsilon)
+        # print('epoch ', epoch, ' step ', step, ' d_iter ', d_iter, ' lamda ', self.epsilon)
         if epoch > step and 'bort' in method:
             with torch.no_grad():
                 pred_max = torch.argmax(logit, dim=1)
