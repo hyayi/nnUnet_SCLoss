@@ -1,20 +1,16 @@
-from __future__ import annotations
-import multiprocessing
-import os
-from typing import List
-from pathlib import Path
-from warnings import warn
+import blosc2
+import pickle
 
 import numpy as np
-from batchgenerators.utilities.file_and_folder_operations import isfile, subfiles
-from nnunetv2.configuration import default_num_processes
-import time
+from skimage.morphology import skeletonize
 from skimage import measure
 import scipy.ndimage as ndimage
-from skimage import morphology
-import matplotlib.pyplot as plt
-from typing import Callable, Iterable, List, Set, Tuple
 import math
+import numpy as np
+from typing import List
+
+import blosc2
+import pickle
 
 class OverlapTile:
     """
@@ -106,6 +102,7 @@ class OverlapTile:
             out_img[start_h: end_h, start_w: end_w] = roi_img
         return out_img
 
+
 class SkeletonAwareWeight():
     """
     Skeleton Aware Weight
@@ -145,7 +142,6 @@ class SkeletonAwareWeight():
             temp_mask[mask == class_idx] = 1.0
             dis_trf = ndimage.distance_transform_edt(temp_mask)
             
-            st = time.time()
             if class_idx == 1: 
                 # Get weight for border
                 if single_border:
@@ -156,7 +152,6 @@ class SkeletonAwareWeight():
                 # Get weight for objects
                 label_map, label_num = measure.label(temp_mask, connectivity=1, background=0, return_num=True)
                 temp_weight = self._get_object_weight(class_weight[class_idx, 0], dis_trf, label_map, label_num)
-            ed = time.time()
             weight[:, :, class_idx] = temp_weight * temp_mask
         return weight
     
@@ -169,7 +164,7 @@ class SkeletonAwareWeight():
         :return weight:  weight map of border with shape (H, W)        
         """
 
-        sk = morphology.skeletonize(mask, method="lee") / 255  # Lee Skeleton method
+        sk = skeletonize(mask, method="lee") / 255  # Lee Skeleton method
         dis_trf_sk = dis_trf * sk   # Get the distance transform of skeleton pixel
 
         # Get the distance transform to skeleton pixel
@@ -204,7 +199,7 @@ class SkeletonAwareWeight():
             bool_sub = np.zeros(image_prop.image.shape)
             bool_sub[image_prop.image] = 1.0
 
-            bool_sub_sk = morphology.skeletonize(bool_sub, method="lee") /255 # Lee Skeleton method
+            bool_sub_sk = skeletonize(bool_sub, method="lee") /255 # Lee Skeleton method
             if np.count_nonzero(bool_sub_sk == 1.0) == 0:
                 # If there is no skelenton pixel, continue
                 continue
@@ -230,65 +225,27 @@ class SkeletonAwareWeight():
         
         return weight
 
-def _convert_to_npy(npz_file: str, unpack_segmentation: bool = True, overwrite_existing: bool = False,
-                    verify_npy: bool = False, fail_ctr: int = 0) -> None:
-    data_npy = npz_file[:-3] + "npy"
-    seg_npy = npz_file[:-4] + "_seg.npy"
-    try:
-        npz_content = None  # will only be opened on demand
+def load_data(data_path):
+    if data_path.endswith('.npz'):
+        # .npy 파일 처리
+        data = np.load(data_path)['seg']
+        return data
 
-        if overwrite_existing or not isfile(data_npy):
-            try:
-                npz_content = np.load(npz_file) if npz_content is None else npz_content
-            except Exception as e:
-                print(f"Unable to open preprocessed file {npz_file}. Rerun nnUNetv2_preprocess!")
-                raise e
-            np.save(data_npy, npz_content['data'])
+    elif data_path.endswith('.b2nd'):
+        # .b2nd 파일 처리 (Blosc2 방식)
+        dparams = {
+            'nthreads': 1
+        }
+        data = blosc2.open(urlpath=data_path, mode='r', dparams=dparams, mmap_mode='r')
+        return data
+    else :
+        raise ValueError(f"Unknown file type: {data_path}")
 
-        if unpack_segmentation and (overwrite_existing or not isfile(seg_npy)):
-            try:
-                npz_content = np.load(npz_file) if npz_content is None else npz_content
-            except Exception as e:
-                print(f"Unable to open preprocessed file {npz_file}. Rerun nnUNetv2_preprocess!")
-                raise e
-            np.save(npz_file[:-4] + "_seg.npy", npz_content['seg'])
+def load_pkl(path):
+    with open(path, 'rb') as f:
+        data =  pickle.load(f)
 
-        if verify_npy:
-            try:
-                np.load(data_npy, mmap_mode='r')
-                if isfile(seg_npy):
-                    np.load(seg_npy, mmap_mode='r')
-            except ValueError:
-                os.remove(data_npy)
-                os.remove(seg_npy)
-                print(f"Error when checking {data_npy} and {seg_npy}, fixing...")
-                if fail_ctr < 2:
-                    _convert_to_npy(npz_file, unpack_segmentation, overwrite_existing, verify_npy, fail_ctr+1)
-                else:
-                    raise RuntimeError("Unable to fix unpacking. Please check your system or rerun nnUNetv2_preprocess")
-
-    except KeyboardInterrupt:
-        if isfile(data_npy):
-            os.remove(data_npy)
-        if isfile(seg_npy):
-            os.remove(seg_npy)
-        raise KeyboardInterrupt
-
-
-def unpack_dataset(folder: str, unpack_segmentation: bool = True, overwrite_existing: bool = False,
-                   num_processes: int = default_num_processes,
-                   verify: bool = False):
-    """
-    all npz files in this folder belong to the dataset, unpack them all
-    """
-    with multiprocessing.get_context("spawn").Pool(num_processes) as p:
-        npz_files = subfiles(folder, True, None, ".npz", True)
-        p.starmap(_convert_to_npy, zip(npz_files,
-                                       [unpack_segmentation] * len(npz_files),
-                                       [overwrite_existing] * len(npz_files),
-                                       [verify] * len(npz_files))
-                  )
-
-
-if __name__ == '__main__':
-    unpack_dataset('/media/fabian/data/nnUNet_preprocessed/Dataset002_Heart/2d')
+    return data
+def save_pkl(obj, path):
+    with open(path, 'wb') as f:
+        pickle.dump(obj, f)

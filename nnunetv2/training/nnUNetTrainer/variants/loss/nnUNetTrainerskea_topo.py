@@ -34,11 +34,11 @@ from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
 from batchgenerators.dataloading.nondet_multi_threaded_augmenter import NonDetMultiThreadedAugmenter
 from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgenerators.dataloading.single_threaded_augmenter import SingleThreadedAugmenter
-from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetNumpyWeight
 from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to_one_hot, determine_num_input_channels
 from torch.nn.parallel import DistributedDataParallel as DDP
-from nnunetv2.training.data_augmentation.custom_transforms.weightmap_transforms import DownsampleSegForDSTransformWeight,SpatialTransformWeight
 from nnunetv2.training.loss.skea_topo import WeightMapBortLoss
+from nnunetv2.training.data_augmentation.custom_transforms.weightmap_transforms import DownsampleSegForDSTransformWeight,SpatialTransformWeight
+
 
 class nnUNetTrainerSkeaTopo(nnUNetTrainer):
     def initialize(self):
@@ -70,8 +70,6 @@ class nnUNetTrainerSkeaTopo(nnUNetTrainer):
                 self.network = DDP(self.network, device_ids=[self.local_rank])
 
             self.loss = self._build_loss()
-
-            self.dataset_class = nnUNetDatasetNumpyWeight
 
             # torch 2.2.2 crashes upon compiling CE loss
             # if self._do_i_compile():
@@ -108,11 +106,24 @@ class nnUNetTrainerSkeaTopo(nnUNetTrainer):
         data = data.to(self.device, non_blocking=True)
         if isinstance(target, list):
             target = [i.to(self.device, non_blocking=True) for i in target]
+            weight = [i.to(self.device, non_blocking=True) for i in weight]
+            skelen = [i.to(self.device, non_blocking=True) for i in skelen]
+            class_weight = [i.to(self.device, non_blocking=True) for i in class_weight]
+            eps = [1e-12] * len(target)
+            method = ["skeaw"]* len(target)
+            step = [20] * len(target)
+            epoch = [self.current_epoch] *len(target)
+            d_iter = [2] * len(target)
         else:
             target = target.to(self.device, non_blocking=True)
-        weight = weight.to(self.device, non_blocking=True)
-        class_weight = class_weight.to(self.device, non_blocking=True)
-        skelen = skelen.to(self.device, non_blocking=True)
+            weight = target.to(self.device, non_blocking=True)
+            class_weight = target.to(self.device, non_blocking=True)
+            skelen = target.to(self.device, non_blocking=True)
+            eps = 1e-12
+            method = "skeaw"
+            step = 20
+            epoch = self.current_epoch
+            d_iter = 2
 
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
@@ -122,8 +133,7 @@ class nnUNetTrainerSkeaTopo(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             # del data
-            l = self.loss(output, target,weight_maps=weight, class_weight=class_weight, label_skelen=skelen, eps = 1e-12, method='skeaw', step=20, epoch=self.current_epoch, d_iter=2)
-
+            l = self.loss(output, target, weight, class_weight, skelen, eps, method, step, epoch, d_iter)
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
             self.grad_scaler.unscale_(self.optimizer)
@@ -147,11 +157,24 @@ class nnUNetTrainerSkeaTopo(nnUNetTrainer):
         data = data.to(self.device, non_blocking=True)
         if isinstance(target, list):
             target = [i.to(self.device, non_blocking=True) for i in target]
+            weight = [i.to(self.device, non_blocking=True) for i in weight]
+            skelen = [i.to(self.device, non_blocking=True) for i in skelen]
+            class_weight = [i.to(self.device, non_blocking=True) for i in class_weight]
+            eps = [1e-12] * len(target)
+            method = ["skeaw"]* len(target)
+            step = [20] * len(target)
+            epoch = [self.current_epoch] *len(target)
+            d_iter = [2] * len(target)
         else:
             target = target.to(self.device, non_blocking=True)
-        weight = weight.to(self.device, non_blocking=True)
-        class_weight = class_weight.to(self.device, non_blocking=True)
-        skelen = skelen.to(self.device, non_blocking=True)
+            weight = target.to(self.device, non_blocking=True)
+            class_weight = target.to(self.device, non_blocking=True)
+            skelen = target.to(self.device, non_blocking=True)
+            eps = 1e-12
+            method = "skeaw"
+            step = 20
+            epoch = self.current_epoch
+            d_iter = 2
 
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
@@ -160,7 +183,7 @@ class nnUNetTrainerSkeaTopo(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             del data
-            l = self.loss(output, target,weight_maps=weight, class_weight=class_weight, label_skelen=skelen, eps = 1e-12, method='skeaw', step=20, epoch=self.current_epoch, d_iter=2)
+            l = self.loss(output, target, weight, class_weight, skelen, eps, method, step, epoch, d_iter)
 
         # we only need the output with the highest output resolution (if DS enabled)
         if self.enable_deep_supervision:
@@ -209,19 +232,6 @@ class nnUNetTrainerSkeaTopo(nnUNetTrainer):
             fn_hard = fn_hard[1:]
 
         return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
-
-    def get_tr_and_val_datasets(self):
-        # create dataset split
-        self.dataset_class = nnUNetDatasetNumpyWeight
-        tr_keys, val_keys = self.do_split()
-
-        # load the datasets for training and validation. Note that we always draw random samples so we really don't
-        # care about distributing training cases across GPUs.
-        dataset_tr = self.dataset_class(self.preprocessed_dataset_folder, tr_keys,
-                                        folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
-        dataset_val = self.dataset_class(self.preprocessed_dataset_folder, val_keys,
-                                         folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
-        return dataset_tr, dataset_val
 
     def get_dataloaders(self):
         if self.dataset_class is None:
@@ -477,5 +487,5 @@ class nnUNetTrainerSkeaTopo(nnUNetTrainer):
             )
 
         if deep_supervision_scales is not None:
-            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
+            transforms.append(DownsampleSegForDSTransformWeight(ds_scales=deep_supervision_scales))
         return ComposeTransforms(transforms)

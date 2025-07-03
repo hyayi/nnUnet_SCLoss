@@ -226,9 +226,6 @@ class SpatialTransformWeight(BasicTransform):
         if data_dict.get('weight') is not None:
             data_dict['weight'] = self._apply_to_weight(data_dict['weight'], **params)
 
-        if data_dict.get('class_weight') is not None:
-            data_dict['class_weight'] = self._apply_to_class_weight(data_dict['class_weight'], **params)
-
         if data_dict.get('skelen') is not None:
             data_dict['skelen'] = self._apply_to_skelen(data_dict['skelen'], **params)
 
@@ -283,6 +280,41 @@ class SpatialTransformWeight(BasicTransform):
             return grid_sample(img[None], _convert_my_grid_to_grid_sample_grid(grid, img.shape[1:])[None],
                                mode='bilinear', padding_mode=self.padding_mode_image, align_corners=False)[0]
 
+    def _apply_to_weight(self, weight: torch.Tensor, **params) -> torch.Tensor:
+        weight = weight.contiguous()
+        if params['affine'] is None and params['elastic_offsets'] is None:
+            # No spatial transformation is being done. Round grid_center and crop without having to interpolate.
+            # This saves compute.
+            # cropping requires the center to be given as integer coordinates
+            weight = crop_tensor(weight,
+                                       [math.floor(i) for i in params['center_location_in_pixels']],
+                                       self.patch_size,
+                                       pad_mode='constant',
+                                       pad_kwargs={'value': 0})
+            return weight
+
+        else:
+            grid = _create_centered_identity_grid2(self.patch_size)
+            
+            # we deform first, then rotate
+            if params['elastic_offsets'] is not None:
+                grid += params['elastic_offsets']
+            if params['affine'] is not None:
+                grid = torch.matmul(grid, torch.from_numpy(params['affine']).float())
+
+            # we center the grid around the center_location_in_pixels. We should center the mean of the grid, not the center position
+            # only do this if we elastic deform
+            if self.center_deformation and params['elastic_offsets'] is not None:
+                mn = grid.mean(dim=list(range(weight.ndim - 1)))
+            else:
+                mn = 0
+
+            new_center = torch.Tensor([c - s / 2 for c, s in zip(params['center_location_in_pixels'], weight.shape[1:])])
+            grid += (new_center - mn)
+            # print(f'grid sample with pad mode {self.padding_mode_image}')
+            return grid_sample(weight[None], _convert_my_grid_to_grid_sample_grid(grid, weight.shape[1:])[None],
+                               mode='bilinear', padding_mode="zeros", align_corners=False)[0]
+        
     def _apply_to_segmentation(self, segmentation: torch.Tensor, **params) -> torch.Tensor:
         segmentation = segmentation.contiguous()
         if params['affine'] is None and params['elastic_offsets'] is None:
@@ -367,15 +399,10 @@ class SpatialTransformWeight(BasicTransform):
                         del tmp
             del grid
             return result_seg.contiguous()
+        
 
     def _apply_to_regr_target(self, regression_target, **params) -> torch.Tensor:
         return self._apply_to_image(regression_target, **params)
-    
-    def _apply_to_weight(self, weight, **params) -> torch.Tensor:
-       return self._apply_to_image(weight, **params)
-    
-    def _apply_to_class_weight(self, class_weight, **params) -> torch.Tensor:
-        return self._apply_to_image(class_weight, **params)
     
     def _apply_to_skelen(self, skelen, **params) -> torch.Tensor:
         return self._apply_to_segmentation(skelen, **params)

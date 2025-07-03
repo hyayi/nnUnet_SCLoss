@@ -117,82 +117,6 @@ class nnUNetDatasetNumpy(nnUNetBaseDataset):
                        num_processes: int = default_num_processes,
                        verify: bool = True):
         return unpack_dataset(folder, True, overwrite_existing, num_processes, verify)
-
-class nnUNetDatasetNumpyWeight(nnUNetBaseDataset):
-    def load_case(self, identifier):
-        data_npy_file = join(self.source_folder, identifier + '.npy')
-        if not isfile(data_npy_file):
-            data = np.load(join(self.source_folder, identifier + '.npz'))['data']
-        else:
-            data = np.load(data_npy_file, mmap_mode='r')
-
-        seg_npy_file = join(self.source_folder, identifier + '_seg.npy')
-        if not isfile(seg_npy_file):
-            seg = np.load(join(self.source_folder, identifier + '.npz'))['seg']
-        else:
-            seg = np.load(seg_npy_file, mmap_mode='r')
-
-        if self.folder_with_segs_from_previous_stage is not None:
-            prev_seg_npy_file = join(self.folder_with_segs_from_previous_stage, identifier + '.npy')
-            if isfile(prev_seg_npy_file):
-                seg_prev = np.load(prev_seg_npy_file, 'r')
-            else:
-                seg_prev = np.load(join(self.folder_with_segs_from_previous_stage, identifier + '.npz'))['seg']
-        else:
-            seg_prev = None
-
-        weight_npy_file = join(self.source_folder, identifier + '_weight.npy')
-        if not isfile(weight_npy_file):
-            weight = np.load(join(self.source_folder, identifier + '.npz'))['weight']
-        else:
-            weight = np.load(weight_npy_file, mmap_mode='r')
-
-        class_weight_npy_file = join(self.source_folder, identifier + '_class_weight.npy')
-        if not isfile(class_weight_npy_file):
-            class_weight = np.load(join(self.source_folder, identifier + '.npz'))['class_weight']
-        else:
-            class_weight = np.load(class_weight_npy_file, mmap_mode='r')
-
-        skelen_npy_file = join(self.source_folder, identifier + '_skelen.npy')
-        if not isfile(skelen_npy_file):
-            skelen = np.load(join(self.source_folder, identifier + '.npz'))['skelen']
-        else:
-            skelen = np.load(skelen_npy_file, mmap_mode='r')
-
-        properties = load_pickle(join(self.source_folder, identifier + '.pkl'))
-        return data, seg, weight, class_weight, skelen, seg_prev, properties
-
-    @staticmethod
-    def save_case(
-            data: np.ndarray,
-            seg: np.ndarray,
-            properties: dict,
-            output_filename_truncated: str
-    ):
-        np.savez_compressed(output_filename_truncated + '.npz', data=data, seg=seg)
-        write_pickle(properties, output_filename_truncated + '.pkl')
-
-    @staticmethod
-    def save_seg(
-            seg: np.ndarray,
-            output_filename_truncated: str
-    ):
-        np.savez_compressed(output_filename_truncated + '.npz', seg=seg)
-
-    @staticmethod
-    def get_identifiers(folder: str) -> List[str]:
-        """
-        returns all identifiers in the preprocessed data folder
-        """
-        case_identifiers = [i[:-4] for i in os.listdir(folder) if i.endswith("npz")]
-        return case_identifiers
-
-    @staticmethod
-    def unpack_dataset(folder: str, overwrite_existing: bool = False,
-                       num_processes: int = default_num_processes,
-                       verify: bool = True):
-        return unpack_dataset(folder, True, overwrite_existing, num_processes, verify)
-    
     
 class nnUNetDatasetBlosc2(nnUNetBaseDataset):
     def __init__(self, folder: str, identifiers: List[str] = None,
@@ -373,7 +297,6 @@ class nnUNetDatasetBlosc2(nnUNetBaseDataset):
 file_ending_dataset_mapping = {
     'npz': nnUNetDatasetNumpy,
     'b2nd': nnUNetDatasetBlosc2,
-    'weight': nnUNetDatasetNumpyWeight
 }
 
 

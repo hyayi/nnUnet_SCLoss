@@ -14,6 +14,7 @@ from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDatasetBlosc2
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 from acvl_utils.cropping_and_padding.bounding_boxes import crop_and_pad_nd
+from nnunetv2.training.dataloading.utils import SkeletonAwareWeight
 
 
 class nnUNetDataLoader(DataLoader):
@@ -243,6 +244,9 @@ class nnUNetDataLoaderWeight(nnUNetDataLoader):
         # preallocate memory
         data_all = np.zeros(self.data_shape, dtype=np.float32)
         seg_all = np.zeros(self.seg_shape, dtype=np.int16)
+        weight_all = np.zeros((self.batch_size,2, *self.patch_size), dtype=np.float32)
+        skelen_all = np.zeros((self.batch_size,2, *self.patch_size), dtype=np.int16)
+        class_weight_all = np.zeros((self.batch_size,2, 1), dtype=np.float32)
 
         for j, i in enumerate(selected_keys):
             force_fg = self.get_do_oversample(j)
@@ -258,14 +262,21 @@ class nnUNetDataLoaderWeight(nnUNetDataLoader):
             data_all[j] = crop_and_pad_nd(data, bbox, 0)
 
             seg_cropped = crop_and_pad_nd(seg, bbox, -1)
+            
             if seg_prev is not None:
                 seg_cropped = np.vstack((seg_cropped, crop_and_pad_nd(seg_prev, bbox, -1)[None]))
             seg_all[j] = seg_cropped
+
+            weight_all[j] = crop_and_pad_nd(properties["weight"].astype(np.float32), bbox, 0)
+            skelen_all[j] = crop_and_pad_nd(properties["skelen"].astype(np.int16), bbox, 0)
+            class_weight_all[j] = properties["class_weight"].astype(np.float32)
 
 
         if self.patch_size_was_2d:
             data_all = data_all[:, :, 0]
             seg_all = seg_all[:, :, 0]
+            weight_all = weight_all[:, :, 0]
+            skelen_all = skelen_all[:, :, 0]
 
 
         if self.transforms is not None:
@@ -273,6 +284,9 @@ class nnUNetDataLoaderWeight(nnUNetDataLoader):
                 with threadpool_limits(limits=1, user_api=None):
                     data_all = torch.from_numpy(data_all).float()
                     seg_all = torch.from_numpy(seg_all).to(torch.int16)
+                    weight_all = torch.from_numpy(weight_all).float()
+                    skelen_all = torch.from_numpy(skelen_all).to(torch.int16)
+                    class_weight_all = torch.from_numpy(class_weight_all).float()
 
                     images, segs, weights, class_weights, skelens = [], [], [], [], []
 
@@ -280,6 +294,9 @@ class nnUNetDataLoaderWeight(nnUNetDataLoader):
                         tmp = self.transforms(**{
                             'image': data_all[b],
                             'segmentation': seg_all[b],
+                            'weight':weight_all[b],
+                            "skelen":skelen_all[b],
+                            'class_weight':class_weight_all[b],
                         })
                         images.append(tmp['image'])
                         segs.append(tmp['segmentation'])
@@ -315,6 +332,7 @@ class nnUNetDataLoaderWeight(nnUNetDataLoader):
             'target': seg_all,
             'keys': selected_keys
         }
+
 if __name__ == '__main__':
     folder = join(nnUNet_preprocessed, 'Dataset002_Heart', 'nnUNetPlans_3d_fullres')
     ds = nnUNetDatasetBlosc2(folder)  # this should not load the properties!
