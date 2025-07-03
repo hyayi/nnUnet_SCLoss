@@ -147,7 +147,7 @@ def get_weightmap_entry():
     parser = argparse.ArgumentParser()
 
     # 필수 positional argument
-    parser.add_argument('dataset_name_or_id', type=str,
+    parser.add_argument('dataset_name_or_id', type=int,
                         help="Dataset name or ID to train with")
 
     parser.add_argument('--single_border', action='store_true', default=False,
@@ -158,7 +158,7 @@ def get_weightmap_entry():
 
     parser.add_argument('--do_tube', default=True,
                         help="Whether to apply tube processing (default: True)")
-    args =  parser.parse_known_args()
+    args, unrecognized_args =  parser.parse_known_args()
 
     get_weight(args.dataset_name_or_id, args.single_border, args.dilation_k, args.do_tube)
 
