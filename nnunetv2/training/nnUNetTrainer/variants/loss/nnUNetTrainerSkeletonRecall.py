@@ -41,9 +41,9 @@ from nnunetv2.training.data_augmentation.custom_transforms.skeletonization impor
 
 
 class nnUNetTrainerSkeletonRecall(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
         self.weight_srec = 1 # This is the default value, you can change it if you want
         if self.label_manager.has_regions:
             raise NotImplementedError("trainer not implemented for regions")
