@@ -3,13 +3,12 @@ from typing import Union, Tuple
 from batchgenerators.dataloading.data_loader import DataLoader
 import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import *
-from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 
 
 class nnUNetDataLoaderBase(DataLoader):
     def __init__(self,
-                 data: nnUNetDataset,
+                 data,
                  batch_size: int,
                  patch_size: Union[List[int], Tuple[int, ...], np.ndarray],
                  final_patch_size: Union[List[int], Tuple[int, ...], np.ndarray],
