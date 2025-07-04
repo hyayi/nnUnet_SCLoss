@@ -3,7 +3,6 @@ import torch
 from threadpoolctl import threadpool_limits
 
 from nnunetv2.training.dataloading.base_data_loader import nnUNetDataLoaderBase
-from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
 from skimage.morphology import skeletonize, dilation
 
 def calculate_tubed_skeleton(seg_all, do_tube):
