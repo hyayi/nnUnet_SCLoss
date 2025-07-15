@@ -9,6 +9,7 @@ from torch import Tensor
 from topolosses.losses.hutopo import HutopoLoss
 from topolosses.losses.betti_matching import BettiMatchingLoss
 import torch.nn.functional as F
+import os
 
 class DC_and_CE_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
@@ -215,7 +216,7 @@ class DC_and_SC_loss(nn.Module):
         sc_kwargs: dict,
         weight_dice: float = 1.0,
         weight_sc: float = 1.0,
-        dice_class=SoftDiceLoss
+        dice_class=MemoryEfficientSoftDiceLoss
     ):
         """
         DC (Dice)와 SC (Spatial Coherence)를 합친 복합 손실함수
@@ -252,54 +253,157 @@ class DC_and_SC_loss(nn.Module):
         return self.weight_dice * dice_loss + self.weight_sc * sc_loss
     
 
-# class DC_and_MSC_loss(nn.Module):
-#     def __init__(
-#         self,
-#         soft_dice_kwargs: dict,
-#         sc_kwargs: dict,
-#         weight_dice: float = 1.0,
-#         weight_sc: float = 1.0,
-#         dice_class=SoftDiceLoss
-#     ):
-#         """
-#         DC (Dice)와 SC (Spatial Coherence)를 합친 복합 손실함수
+class DC_Clloss(nn.Module):
+    def __init__(self, soft_dice_kwargs, cl_kwargs, weight_dice=1, weight_cl=1, ignore_label=None,
+                 dice_class=MemoryEfficientSoftDiceLoss):
+        """
+        Weights for CE and Dice do not need to sum to one. You can set whatever you want.
+        :param soft_dice_kwargs:
+        :param ce_kwargs:
+        :param aggregate:
+        :param square_dice:
+        :param weight_ce:
+        :param weight_dice:
+        """
+        super(DC_Clloss, self).__init__()
 
-#         Args:
-#             num_classes (int): 클래스 수
-#             soft_dice_kwargs (dict): Dice 손실 설정 파라미터
-#             sc_kwargs (dict): SC 손실 설정 파라미터 (k, alpha)
-#             weight_dice (float): Dice 손실 가중치
-#             weight_sc (float): SC 손실 가중치
-#             do_bg (bool): SC에서 배경(클래스 0)을 제외할지 여부
-#             dice_class: 사용할 Dice Loss 클래스
-#         """
-#         super().__init__()
+        self.weight_dice = weight_dice
+        self.weight_dice = weight_dice
+        self.weight_cl = weight_cl
+        self.ignore_label = ignore_label
 
-#         self.weight_dice = weight_dice
-#         self.weight_sc = weight_sc
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.cl = ClDiceLoss(**cl_kwargs)
 
-#         self.dc = dice_class(apply_nonlin=softmax_helper_dim1,**soft_dice_kwargs)
-#         self.sc = MultiClassSCLoss(**sc_kwargs)
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        """
+        target must be b, c, x, y(, z) with c=1
+        :param net_output:
+        :param target:
+        :return:
+        """
+        if self.ignore_label is not None:
+            assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables ' \
+                                         '(DC_and_CE_loss)'
+            mask = target != self.ignore_label
+            # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
+            # ignore gradients in those areas anyway
+            target_dice = torch.where(mask, target, 0)
+            num_fg = mask.sum()
+        else:
+            target_dice = target
+            mask = None
 
-#     def forward(self, net_output: Tensor, target: Tensor) -> Tensor:
-#         """
-#         Args:
-#             net_output (Tensor): [B, C, H, W] - 로짓 출력
-#             target (Tensor): [B, H, W] - 정답 클래스 인덱스
+        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) \
+            if self.weight_dice != 0 else 0
+        cl_loss = self.cl(net_output,target)
 
-#         Returns:
-#             loss (Tensor): 최종 손실값
-#         """
-#         sc_loss = self.sc(net_output, target)
-#         dice_loss = self.dc(net_output, target)
+        result =  self.weight_dice * dc_loss + self.weight_cl *cl_loss
+        return result
 
-#         return self.weight_dice * dice_loss + self.weight_sc * sc_loss
-    
+
+class DC_and_BettiMatchingLoss(nn.Module):
+    def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,dice_class=MemoryEfficientSoftDiceLoss):
+        super().__init__()
+        self.weight_dice = weight_dice
+        self.weight_topo = weight_topo
+
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.topo = BettiMatchingLoss(softmax=True,use_base_loss=False,num_processes=os.cpu_count())
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        dc_loss = self.dc(net_output, target)
+
+        if target.ndim == net_output.ndim:
+            assert target.shape[1] == 1
+            target = target[:, 0]
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
+        topo_loss = self.topo(net_output, target_onehot)
+        
+        return self.weight_dice * dc_loss + self.weight_topo * topo_loss
+
+
+class DC_and_WassersteinLoss(nn.Module):
+    def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,
+                 dice_class=MemoryEfficientSoftDiceLoss):
+        super().__init__()
+        self.weight_dice = weight_dice
+        self.weight_topo = weight_topo
+
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.topo = HutopoLoss(softmax=True,use_base_loss=False,num_processes=os.cpu_count())
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        dc_loss = self.dc(net_output, target)
+
+        if target.ndim == net_output.ndim:
+            assert target.shape[1] == 1
+            target = target[:, 0]
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
+        topo_loss = self.topo(net_output, target_onehot)
+        
+        return self.weight_dice * dc_loss + self.weight_topo * topo_loss
+
+class DC_SkelREC_loss(nn.Module):
+    def __init__(self, soft_dice_kwargs, soft_skelrec_kwargs, ce_kwargs, weight_dice=1, weight_srec=1, 
+                 ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
+        """
+        Weights for CE and Dice do not need to sum to one. You can set whatever you want.
+        :param soft_dice_kwargs:
+        :param soft_skelrec_kwargs:
+        :param ce_kwargs:
+        :param aggregate:
+        :param square_dice:
+        :param weight_ce:
+        :param weight_dice:
+        """
+        super(DC_SkelREC_and_CE_loss, self).__init__()
+        if ignore_label is not None:
+            ce_kwargs['ignore_index'] = ignore_label
+
+        self.weight_dice = weight_dice
+        self.weight_srec = weight_srec
+        self.ignore_label = ignore_label
+
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.srec = SoftSkeletonRecallLoss(apply_nonlin=softmax_helper_dim1, **soft_skelrec_kwargs)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor, skel: torch.Tensor):
+        """
+        target must be b, c, x, y(, z) with c=1
+        :param net_output:
+        :param target:
+        :return:
+        """
+
+        if self.ignore_label is not None:
+            assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables ' \
+                                         '(DC_and_CE_loss)'
+            mask = target != self.ignore_label
+            # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
+            # ignore gradients in those areas anyway
+            target_dice = torch.where(mask, target, 0)
+            target_skel = torch.where(mask, skel, 0)
+            num_fg = mask.sum()
+        else:
+            target_dice = target
+            target_skel = skel
+            mask = None
+
+        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) \
+            if self.weight_dice != 0 else 0
+        srec_loss = self.srec(net_output, target_skel, loss_mask=mask) \
+            if self.weight_srec != 0 else 0
+
+        result = self.weight_dice * dc_loss + self.weight_srec * srec_loss
+        return result
 
 
 class DC_and_CE_SCloss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, sc_kwargs, weight_ce=1, weight_dice=1, weight_sc=1, ignore_label=None,
-                 dice_class=SoftDiceLoss):
+                 dice_class=MemoryEfficientSoftDiceLoss):
         """
         Weights for CE and Dice do not need to sum to one. You can set whatever you want.
         :param soft_dice_kwargs:
@@ -349,51 +453,6 @@ class DC_and_CE_SCloss(nn.Module):
 
         result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + self.weight_sc *sc_loss
         return result
-    
-
-class DC_and_SC_loss(nn.Module):
-    def __init__(
-        self,
-        soft_dice_kwargs: dict,
-        sc_kwargs: dict,
-        weight_dice: float = 1.0,
-        weight_sc: float = 1.0,
-        dice_class=SoftDiceLoss
-    ):
-        """
-        DC (Dice)와 SC (Spatial Coherence)를 합친 복합 손실함수
-
-        Args:
-            num_classes (int): 클래스 수
-            soft_dice_kwargs (dict): Dice 손실 설정 파라미터
-            sc_kwargs (dict): SC 손실 설정 파라미터 (k, alpha)
-            weight_dice (float): Dice 손실 가중치
-            weight_sc (float): SC 손실 가중치
-            do_bg (bool): SC에서 배경(클래스 0)을 제외할지 여부
-            dice_class: 사용할 Dice Loss 클래스
-        """
-        super().__init__()
-
-        self.weight_dice = weight_dice
-        self.weight_sc = weight_sc
-
-        self.dc = dice_class(apply_nonlin=softmax_helper_dim1,**soft_dice_kwargs)
-        self.sc = MultiClassOneVsRestSCLoss(**sc_kwargs)
-
-    def forward(self, net_output: Tensor, target: Tensor) -> Tensor:
-        """
-        Args:
-            net_output (Tensor): [B, C, H, W] - 로짓 출력
-            target (Tensor): [B, H, W] - 정답 클래스 인덱스
-
-        Returns:
-            loss (Tensor): 최종 손실값
-        """
-        sc_loss = self.sc(net_output, target)
-        dice_loss = self.dc(net_output, target)
-
-        return self.weight_dice * dice_loss + self.weight_sc * sc_loss
-
 
 class DC_and_CE_Clloss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, cl_kwargs, weight_ce=1, weight_dice=1, weight_cl=1, ignore_label=None,
@@ -448,147 +507,90 @@ class DC_and_CE_Clloss(nn.Module):
         result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + self.weight_cl *cl_loss
         return result
 
-class DC_Clloss(nn.Module):
-    def __init__(self, soft_dice_kwargs, cl_kwargs, weight_dice=1, weight_cl=1, ignore_label=None,
-                 dice_class=SoftDiceLoss):
-        """
-        Weights for CE and Dice do not need to sum to one. You can set whatever you want.
-        :param soft_dice_kwargs:
-        :param ce_kwargs:
-        :param aggregate:
-        :param square_dice:
-        :param weight_ce:
-        :param weight_dice:
-        """
-        super(DC_Clloss, self).__init__()
-
-        self.weight_dice = weight_dice
-        self.weight_dice = weight_dice
-        self.weight_cl = weight_cl
-        self.ignore_label = ignore_label
-
-        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
-        self.cl = ClDiceLoss(**cl_kwargs)
-
-    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
-        """
-        target must be b, c, x, y(, z) with c=1
-        :param net_output:
-        :param target:
-        :return:
-        """
-        if self.ignore_label is not None:
-            assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables ' \
-                                         '(DC_and_CE_loss)'
-            mask = target != self.ignore_label
-            # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
-            # ignore gradients in those areas anyway
-            target_dice = torch.where(mask, target, 0)
-            num_fg = mask.sum()
-        else:
-            target_dice = target
-            mask = None
-
-        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) \
-            if self.weight_dice != 0 else 0
-        cl_loss = self.cl(net_output,target)
-
-        result =  self.weight_dice * dc_loss + self.weight_cl *cl_loss
-        return result
-
-
-class CE_Clloss(nn.Module):
-    def __init__(self,  ce_kwargs, cl_kwargs, weight_ce=1, weight_cl=1, ignore_label=None):
-        """
-        Weights for CE and Dice do not need to sum to one. You can set whatever you want.
-        :param soft_dice_kwargs:
-        :param ce_kwargs:
-        :param aggregate:
-        :param square_dice:
-        :param weight_ce:
-        :param weight_dice:
-        """
-        super(CE_Clloss, self).__init__()
+class DC_and_BettiMatchingLoss_CE(nn.Module):
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, weight_topo=1,
+                 ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
+        super().__init__()
         if ignore_label is not None:
             ce_kwargs['ignore_index'] = ignore_label
 
+        self.weight_dice = weight_dice
+        self.weight_topo = weight_topo
         self.weight_ce = weight_ce
-        self.weight_cl = weight_cl
         self.ignore_label = ignore_label
 
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.topo = BettiMatchingLoss(softmax=True, use_base_loss=False, num_processes=os.cpu_count())
         self.ce = RobustCrossEntropyLoss(**ce_kwargs)
-        self.cl = ClDiceLoss(**cl_kwargs)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
-        """
-        target must be b, c, x, y(, z) with c=1
-        :param net_output:
-        :param target:
-        :return:
-        """
+        # Dice Loss
+        dc_loss = self.dc(net_output, target)
+
+        # CE Loss
         if self.ignore_label is not None:
-            assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables ' \
-                                         '(DC_and_CE_loss)'
-            mask = target != self.ignore_label
-            # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
-            # ignore gradients in those areas anyway
-            target_dice = torch.where(mask, target, 0)
-            num_fg = mask.sum()
+            assert target.shape[1] == 1
+            ce_loss = self.ce(net_output, target[:, 0])
         else:
-            target_dice = target
-            mask = None
+            ce_loss = self.ce(net_output, target[:, 0])
 
-        ce_loss = self.ce(net_output, target[:, 0]) \
-            if self.weight_ce != 0 and (self.ignore_label is None or num_fg > 0) else 0
-        cl_loss = self.cl(net_output,target)
-
-        result = self.weight_ce * ce_loss + self.weight_cl *cl_loss
-        return result
-
-class DC_and_BettiMatchingLoss(nn.Module):
-    def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,
-                 dice_class=None):
-        super().__init__()
-        self.weight_dice = weight_dice
-        self.weight_topo = weight_topo
-
-        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
-        self.topo = BettiMatchingLoss(softmax=True,use_base_loss=False,num_processes=4)
-
-    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
-        dc_loss = self.dc(net_output, target)
-
+        # Topo Loss
         if target.ndim == net_output.ndim:
             assert target.shape[1] == 1
             target = target[:, 0]
-        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1])
         target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         topo_loss = self.topo(net_output, target_onehot)
-        
-        return self.weight_dice * dc_loss + self.weight_topo * topo_loss
 
+        # Combine Losses
+        return (
+            self.weight_ce * ce_loss +
+            self.weight_dice * dc_loss +
+            self.weight_topo * topo_loss
+        )
 
-class DC_and_WassersteinLoss(nn.Module):
-    def __init__(self, soft_dice_kwargs, weight_topo=1, weight_dice=1,
-                 dice_class=None):
+class DC_and_WassersteinLoss_CE(nn.Module):
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, weight_topo=1,
+                 ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
         super().__init__()
+        if ignore_label is not None:
+            ce_kwargs['ignore_index'] = ignore_label
+
         self.weight_dice = weight_dice
         self.weight_topo = weight_topo
+        self.weight_ce = weight_ce
+        self.ignore_label = ignore_label
 
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
-        self.topo = HutopoLoss(softmax=True,use_base_loss=False,num_processes=4)
+        self.topo = HutopoLoss(softmax=True, use_base_loss=False, num_processes=os.cpu_count())
+        self.ce = RobustCrossEntropyLoss(**ce_kwargs)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        # Dice Loss
         dc_loss = self.dc(net_output, target)
 
+        # CE Loss
+        if self.ignore_label is not None:
+            assert target.shape[1] == 1
+            ce_loss = self.ce(net_output, target[:, 0])
+        else:
+            ce_loss = self.ce(net_output, target[:, 0])
+
+        # Topo Loss
         if target.ndim == net_output.ndim:
             assert target.shape[1] == 1
             target = target[:, 0]
-        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1])
         target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
         topo_loss = self.topo(net_output, target_onehot)
-        
-        return self.weight_dice * dc_loss + self.weight_topo * topo_loss
+
+        # Combine Losses
+        return (
+            self.weight_ce * ce_loss +
+            self.weight_dice * dc_loss +
+            self.weight_topo * topo_loss
+        )
+
 class DC_SkelREC_and_CE_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, soft_skelrec_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, weight_srec=1, 
                  ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
