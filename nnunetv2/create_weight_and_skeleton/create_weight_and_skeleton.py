@@ -86,12 +86,15 @@ import os
 import glob
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
+import re
 
 def process_file(i, dataset_folder, weight_class):
 
     data = load_data(i)
-    file_name = os.path.basename(i).split(".")[0].replace("_seg", "")
-    pkl_file_path = os.path.join(dataset_folder, file_name + '.pkl')
+    pkl_file_path = os.path.join(
+        dataset_folder,
+        re.sub(r'(\.[^.]+)+$', '.pkl', os.path.basename(i).replace('_seg', ''))
+    )
     pkl_data = load_pkl(pkl_file_path)
 
     data_type = data.dtype

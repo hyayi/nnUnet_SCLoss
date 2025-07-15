@@ -777,7 +777,7 @@ class nnUNetTrainerSkeaTopoCole(nnUNetTrainer):
         transforms.append(RandomTransform(
             CoLeTraTransform(
                 holes=[2,5],
-                size=[96,96]
+                size=[48,48]
             ),apply_probability=0.3
         ))
         transforms.append(
