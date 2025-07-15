@@ -42,7 +42,7 @@ class nnUNetTrainerDCCLLoss(nnUNetTrainer):
 
         return loss
 
-class nnUNetTrainerDCCECLLoss(nnUNetTrainerCole):
+class nnUNetTrainerDCCECLLoss(nnUNetTrainer):
     def _build_loss(self):
         loss = DC_and_CE_Clloss({'batch_dice': self.configuration_manager.batch_dice,
                                 'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
@@ -51,7 +51,8 @@ class nnUNetTrainerDCCECLLoss(nnUNetTrainerCole):
                                     'smooth': 1.0,
                                     'exclude_background': True,
                                 },
-                                weight_ce=1, weight_dice=1, weight_cl=1, ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+                                ce_kwargs={},weight_ce=1, weight_dice=1, weight_cl=1, 
+                                ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
         if self._do_i_compile():
             loss.dc = torch.compile(loss.dc)
@@ -103,7 +104,7 @@ class nnUNetTrainerDCCLLossCole(nnUNetTrainerCole):
 
         return loss
 
-class nnUNetTrainerDCCECLLossCole(nnUNetTrainer):
+class nnUNetTrainerDCCECLLossCole(nnUNetTrainerCole):
     def _build_loss(self):
         loss = DC_and_CE_Clloss({'batch_dice': self.configuration_manager.batch_dice,
                                 'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
@@ -112,7 +113,8 @@ class nnUNetTrainerDCCECLLossCole(nnUNetTrainer):
                                     'smooth': 1.0,
                                     'exclude_background': True,
                                 },
-                                weight_ce=1, weight_dice=1, weight_cl=1, ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
+                                ce_kwargs={},weight_ce=1, weight_dice=1, weight_cl=1, 
+                                ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
         if self._do_i_compile():
             loss.dc = torch.compile(loss.dc)

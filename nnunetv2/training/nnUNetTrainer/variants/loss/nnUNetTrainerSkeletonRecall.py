@@ -730,8 +730,7 @@ class nnUNetTrainerSkeletonRecallDC(nnUNetTrainerSkeletonRecall):
         loss = DC_SkelREC_loss(soft_dice_kwargs={'batch_dice': self.configuration_manager.batch_dice, 
                                                         'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
                                       soft_skelrec_kwargs={'batch_dice': self.configuration_manager.batch_dice, 
-                                                           'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
-                                      ce_kwargs={}, weight_ce=1, weight_dice=1, weight_srec=1, 
+                                                           'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp},weight_dice=1, weight_srec=1, 
                                       ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
         if self.enable_deep_supervision:
