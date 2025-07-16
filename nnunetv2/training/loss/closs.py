@@ -39,7 +39,7 @@ class CLossTopo(nn.Module):
         x: pred      number_of_classes is 2 in binary case, includes background
         y: gt       number_of_classes is 1 in binary case
         """
-
+        mask = mask.float()  # 강제 변환
         x_logits=x  #presumed example shape 2,2,200,1024,1024
         if self.apply_nonlin is not None:
             x = self.apply_nonlin(x) #preserves shape 2,2,200,1024,1024, normalises to positive Intervall [0,1]
