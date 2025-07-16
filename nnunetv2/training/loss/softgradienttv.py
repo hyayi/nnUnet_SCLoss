@@ -14,14 +14,18 @@ class SoftGradientDiffTVLoss(nn.Module):
 
     def soft_gradient_magnitude(self, mask):
         """
-        Compute soft gradient magnitude
+        Compute soft gradient magnitude using Sobel-like filters
         """
-        grad_x = mask[:, :, :, 1:] - mask[:, :, :, :-1]  # (B, C, H, W-1)
-        grad_y = mask[:, :, 1:, :] - mask[:, :, :-1, :]  # (B, C, H-1, W)
+        # 3x3 Sobel kernels
+        sobel_x = torch.tensor([[[-1, 0, 1],
+                                [-2, 0, 2],
+                                [-1, 0, 1]]], dtype=mask.dtype, device=mask.device).unsqueeze(0).unsqueeze(0)
+        sobel_y = torch.tensor([[[-1, -2, -1],
+                                [ 0,  0,  0],
+                                [ 1,  2,  1]]], dtype=mask.dtype, device=mask.device).unsqueeze(0).unsqueeze(0)
 
-        # Pad to match size
-        grad_x = F.pad(grad_x, (0, 1))  # pad width to match original W
-        grad_y = F.pad(grad_y, (0, 0, 0, 1))  # pad height to match original H
+        grad_x = F.conv2d(mask, sobel_x, padding=1)
+        grad_y = F.conv2d(mask, sobel_y, padding=1)
 
         grad_mag = torch.sqrt(grad_x**2 + grad_y**2 + 1e-5)
         return grad_mag
