@@ -53,7 +53,7 @@ class SoftGradientDiffTVLoss(nn.Module):
 
         # Tube class only
         pred_tube = pred_softmax[:, 1:2, :, :]         # (batch, 1, H, W)
-        target_tube = (target == 1).float().unsqueeze(1)  # (batch, 1, H, W)
+        target_tube = (target == 1).float()  # (batch, 1, H, W)
 
 
         # Soft Gradient Magnitude Loss
