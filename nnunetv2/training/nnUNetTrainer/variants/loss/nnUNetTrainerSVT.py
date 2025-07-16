@@ -47,7 +47,7 @@ class nnUNetTrainerSVTCE(nnUNetTrainer):
                 'ddp': self.is_ddp
             },
             ce_kwargs={},
-            weight_ce=1.0
+            weight_ce=1.0,
             weight_dice=1.0,
             weight_length=1.0,
             weight_tv=1.0,
@@ -110,7 +110,7 @@ class nnUNetTrainerSVTCECole(nnUNetTrainerCole):
                 'ddp': self.is_ddp
             },
             ce_kwargs={},
-            weight_ce=1.0
+            weight_ce=1.0,
             weight_dice=1.0,
             weight_length=1.0,
             weight_tv=1.0,
