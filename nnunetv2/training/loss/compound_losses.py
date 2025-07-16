@@ -11,6 +11,7 @@ from topolosses.losses.betti_matching import BettiMatchingLoss
 import torch.nn.functional as F
 import os
 from nnunetv2.training.loss.softgradienttv import SoftGradientDiffTVLoss
+from nnunetv2.training.loss.cliou import ClIoULoss
 
 class DC_and_CE_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
@@ -849,3 +850,70 @@ class DC_CE_SoftGradientDiffTVLoss(nn.Module):
         # Combine losses
         total_loss = self.weight_dice * dc_loss + self.weight_ce * ce_loss + stv_loss
         return total_loss
+
+
+class DC_and_CE_ClIoULoss(nn.Module):
+    def __init__(self, soft_dice_kwargs, ce_kwargs, clioU_kwargs,
+                 weight_ce=1, weight_dice=1, weight_cl=1, ignore_label=None,
+                 dice_class=None):
+        super().__init__()
+        if ignore_label is not None:
+            ce_kwargs['ignore_index'] = ignore_label
+
+        self.weight_ce = weight_ce
+        self.weight_dice = weight_dice
+        self.weight_cl = weight_cl
+        self.ignore_label = ignore_label
+
+        self.ce = RobustCrossEntropyLoss(**ce_kwargs)
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.cliou = ClIoULoss(**clioU_kwargs)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        if self.ignore_label is not None:
+            assert target.dim() == 4 and target.shape[1] == 1
+            mask = target != self.ignore_label
+            target_dice = torch.where(mask, target, 0)
+            num_fg = mask.sum()
+        else:
+            target_dice = target
+            mask = None
+
+        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) if self.weight_dice else 0
+        ce_loss = self.ce(net_output, target[:, 0]) if self.weight_ce and (self.ignore_label is None or num_fg > 0) else 0
+        cl_loss = self.cliou(net_output, target) if self.weight_cl else 0
+
+        return self.weight_ce * ce_loss + self.weight_dice * dc_loss + self.weight_cl * cl_loss
+    
+
+
+class DC_and_ClIoULoss(nn.Module):
+    def __init__(self, soft_dice_kwargs, ce_kwargs, clioU_kwargs,
+                 weight_dice=1, weight_cl=1, ignore_label=None,
+                 dice_class=None):
+        super().__init__()
+        if ignore_label is not None:
+            ce_kwargs['ignore_index'] = ignore_label
+
+        self.weight_dice = weight_dice
+        self.weight_cl = weight_cl
+        self.ignore_label = ignore_label
+
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.cliou = ClIoULoss(**clioU_kwargs)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        if self.ignore_label is not None:
+            assert target.dim() == 4 and target.shape[1] == 1
+            mask = target != self.ignore_label
+            target_dice = torch.where(mask, target, 0)
+            num_fg = mask.sum()
+        else:
+            target_dice = target
+            mask = None
+
+        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) if self.weight_dice else 0
+        
+        cl_loss = self.cliou(net_output, target) if self.weight_cl else 0
+
+        return self.weight_dice * dc_loss + self.weight_cl * cl_loss
