@@ -786,7 +786,7 @@ class DC_SoftGradientDiffTVLoss_loss(nn.Module):
 
         dc_loss = self.dc(net_output, target_dice, loss_mask=mask) \
             if self.weight_dice != 0 else 0
-        stv_loss =  self.svt(net_output,target)
+        stv_loss =  self.stv(net_output,target)
 
         result = self.weight_dice * dc_loss + stv_loss
         return result
@@ -819,7 +819,7 @@ class DC_CE_SoftGradientDiffTVLoss(nn.Module):
         if ignore_label is not None:
             ce_kwargs['ignore_index'] = ignore_label
         self.ce = RobustCrossEntropyLoss(**ce_kwargs)
-        self.svt = SoftGradientDiffTVLoss(self.weight_length, self.weight_tv)
+        self.stv = SoftGradientDiffTVLoss(self.weight_length, self.weight_tv)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
         """
@@ -844,7 +844,7 @@ class DC_CE_SoftGradientDiffTVLoss(nn.Module):
             if self.weight_ce != 0 and (self.ignore_label is None or num_fg > 0) else 0
 
         # SoftGradientDiffTVLoss (includes length + diff-TV)
-        stv_loss = self.svt(net_output, target)
+        stv_loss = self.stv(net_output, target)
 
         # Combine losses
         total_loss = self.weight_dice * dc_loss + self.weight_ce * ce_loss + stv_loss
