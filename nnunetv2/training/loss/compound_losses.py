@@ -10,6 +10,7 @@ from topolosses.losses.hutopo import HutopoLoss
 from topolosses.losses.betti_matching import BettiMatchingLoss
 import torch.nn.functional as F
 import os
+from softgradienttv import SoftGradientDiffTVLoss
 
 class DC_and_CE_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
@@ -351,8 +352,6 @@ class DC_SkelREC_loss(nn.Module):
                  ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
 
         super(DC_SkelREC_loss, self).__init__()
-        if ignore_label is not None:
-            ce_kwargs['ignore_index'] = ignore_label
 
         self.weight_dice = weight_dice
         self.weight_srec = weight_srec
@@ -639,3 +638,214 @@ class DC_SkelREC_and_CE_loss(nn.Module):
 
         result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + self.weight_srec * srec_loss
         return result
+
+
+class DC_and_WassersteinLoss_CE(nn.Module):
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, weight_topo=1,
+                 ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
+        super().__init__()
+        if ignore_label is not None:
+            ce_kwargs['ignore_index'] = ignore_label
+
+        self.weight_dice = weight_dice
+        self.weight_topo = weight_topo
+        self.weight_ce = weight_ce
+        self.ignore_label = ignore_label
+
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.topo = HutopoLoss(softmax=True, use_base_loss=False, num_processes=os.cpu_count())
+        self.ce = RobustCrossEntropyLoss(**ce_kwargs)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        # Dice Loss
+        dc_loss = self.dc(net_output, target)
+
+        # CE Loss
+        if self.ignore_label is not None:
+            assert target.shape[1] == 1
+            ce_loss = self.ce(net_output, target[:, 0])
+        else:
+            ce_loss = self.ce(net_output, target[:, 0])
+
+        # Topo Loss
+        if target.ndim == net_output.ndim:
+            assert target.shape[1] == 1
+            target = target[:, 0]
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1])
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
+        topo_loss = self.topo(net_output, target_onehot)
+
+        # Combine Losses
+        return (
+            self.weight_ce * ce_loss +
+            self.weight_dice * dc_loss +
+            self.weight_topo * topo_loss
+        )
+
+class DC_SkelREC_and_CE_loss(nn.Module):
+    def __init__(self, soft_dice_kwargs, soft_skelrec_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, weight_srec=1, 
+                 ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
+        """
+        Weights for CE and Dice do not need to sum to one. You can set whatever you want.
+        :param soft_dice_kwargs:
+        :param soft_skelrec_kwargs:
+        :param ce_kwargs:
+        :param aggregate:
+        :param square_dice:
+        :param weight_ce:
+        :param weight_dice:
+        """
+        super(DC_SkelREC_and_CE_loss, self).__init__()
+        if ignore_label is not None:
+            ce_kwargs['ignore_index'] = ignore_label
+
+        self.weight_dice = weight_dice
+        self.weight_ce = weight_ce
+        self.weight_srec = weight_srec
+        self.ignore_label = ignore_label
+
+        self.ce = RobustCrossEntropyLoss(**ce_kwargs)
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.srec = SoftSkeletonRecallLoss(apply_nonlin=softmax_helper_dim1, **soft_skelrec_kwargs)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor, skel: torch.Tensor):
+        """
+        target must be b, c, x, y(, z) with c=1
+        :param net_output:
+        :param target:
+        :return:
+        """
+
+        if self.ignore_label is not None:
+            assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables ' \
+                                         '(DC_and_CE_loss)'
+            mask = target != self.ignore_label
+            # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
+            # ignore gradients in those areas anyway
+            target_dice = torch.where(mask, target, 0)
+            target_skel = torch.where(mask, skel, 0)
+            num_fg = mask.sum()
+        else:
+            target_dice = target
+            target_skel = skel
+            mask = None
+
+        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) \
+            if self.weight_dice != 0 else 0
+        srec_loss = self.srec(net_output, target_skel, loss_mask=mask) \
+            if self.weight_srec != 0 else 0
+        ce_loss = self.ce(net_output, target[:, 0]) \
+            if self.weight_ce != 0 and (self.ignore_label is None or num_fg > 0) else 0
+
+        result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + self.weight_srec * srec_loss
+        return result
+    
+
+class DC_SoftGradientDiffTVLoss_loss(nn.Module):
+    def __init__(self, soft_dice_kwargs, weight_dice=1, weight_length=1, weight_tv=1, 
+                 ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
+        """
+        Weights for CE and Dice do not need to sum to one. You can set whatever you want.
+        :param soft_dice_kwargs:
+        :param soft_skelrec_kwargs:
+        :param aggregate:
+        :param square_dice:
+        :param weight_ce:
+        :param weight_dice:
+        """
+        super(DC_SoftGradientDiffTVLoss_loss, self).__init__()
+
+        self.weight_dice = weight_dice
+        self.weight_length = weight_length
+        self.weight_tv = weight_tv
+        self.ignore_label = ignore_label
+
+        self.stv = SoftGradientDiffTVLoss(self.weight_length,self.weight_tv)
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+    
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor, skel: torch.Tensor):
+        """
+        target must be b, c, x, y(, z) with c=1
+        :param net_output:
+        :param target:
+        :return:
+        """
+
+        if self.ignore_label is not None:
+            assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables ' \
+                                         '(DC_and_CE_loss)'
+            mask = target != self.ignore_label
+            # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
+            # ignore gradients in those areas anyway
+            target_dice = torch.where(mask, target, 0)
+            num_fg = mask.sum()
+        else:
+            target_dice = target
+            mask = None
+
+        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) \
+            if self.weight_dice != 0 else 0
+        stv_loss =  self.svt(net_output,target)
+
+        result = self.weight_dice * dc_loss + stv_loss
+        return result
+
+class DC_CE_SoftGradientDiffTVLoss(nn.Module):
+    def __init__(self, soft_dice_kwargs, ce_kwargs, 
+                 weight_dice=1, weight_ce=1, weight_length=1, weight_tv=1, 
+                 ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
+        """
+        Combines Dice, CrossEntropy, and SoftGradientDiffTVLoss
+        :param soft_dice_kwargs: args for Dice loss
+        :param ce_kwargs: args for CrossEntropy loss
+        :param weight_dice: Dice loss weight
+        :param weight_ce: CrossEntropy loss weight
+        :param weight_length: Soft Gradient Magnitude loss weight
+        :param weight_tv: Difference Mask TV loss weight
+        :param ignore_label: label index to ignore
+        :param dice_class: Dice loss class
+        """
+        super(DC_CE_SoftGradientDiffTVLoss, self).__init__()
+
+        self.weight_dice = weight_dice
+        self.weight_ce = weight_ce
+        self.weight_length = weight_length
+        self.weight_tv = weight_tv
+        self.ignore_label = ignore_label
+
+        # Loss functions
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        if ignore_label is not None:
+            ce_kwargs['ignore_index'] = ignore_label
+        self.ce = nn.CrossEntropyLoss(**ce_kwargs)
+        self.svt = SoftGradientDiffTVLoss(self.weight_length, self.weight_tv)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        """
+        :param net_output: raw logits (batch, C, H, W)
+        :param target: integer GT mask (batch, H, W), values {0,1,...}
+        """
+        if self.ignore_label is not None:
+            assert target.shape[1] == 1, 'ignore label is not implemented for one hot encoded target variables'
+            mask = target != self.ignore_label
+            target_dice = torch.where(mask, target, 0)
+            num_fg = mask.sum()
+        else:
+            target_dice = target
+            mask = None
+
+        # Dice Loss
+        dc_loss = self.dc(net_output, target_dice, loss_mask=mask) \
+            if self.weight_dice != 0 else 0
+
+        # CrossEntropy Loss
+        ce_loss = self.ce(net_output, target[:, 0]) \
+            if self.weight_ce != 0 and (self.ignore_label is None or num_fg > 0) else 0
+
+        # SoftGradientDiffTVLoss (includes length + diff-TV)
+        stv_loss = self.svt(net_output, target)
+
+        # Combine losses
+        total_loss = self.weight_dice * dc_loss + self.weight_ce * ce_loss + stv_loss
+        return total_loss
