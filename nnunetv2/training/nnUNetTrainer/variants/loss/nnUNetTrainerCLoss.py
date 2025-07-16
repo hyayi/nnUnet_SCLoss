@@ -31,10 +31,9 @@ class nnUNetTrainerCLoss_gamma0p2_50epochs(nnUNetTrainerCLoss_gamma0p2):
         configuration: str,
         fold: int,
         dataset_json: dict,
-        unpack_dataset: bool = True,
         device: torch.device = torch.device("cuda"),
     ):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
         self.num_epochs = 50
         self.save_every = 10
 
@@ -63,10 +62,9 @@ class nnUNetTrainerCLoss_gamma0p1_50epochs(nnUNetTrainerCLoss_gamma0p1):
         configuration: str,
         fold: int,
         dataset_json: dict,
-        unpack_dataset: bool = True,
         device: torch.device = torch.device("cuda"),
     ):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
         self.num_epochs = 50
         self.save_every = 10
 
@@ -95,9 +93,8 @@ class nnUNetTrainerCLoss_gamma0p08_50epochs(nnUNetTrainerCLoss_gamma0p08):
         configuration: str,
         fold: int,
         dataset_json: dict,
-        unpack_dataset: bool = True,
         device: torch.device = torch.device("cuda"),
     ):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
         self.num_epochs = 50
         self.save_every = 10

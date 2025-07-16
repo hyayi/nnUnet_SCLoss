@@ -12,20 +12,24 @@ class SoftGradientDiffTVLoss(nn.Module):
         self.alpha = alpha
         self.beta = beta
 
-    def soft_gradient_magnitude(self, mask):
+    def soft_gradient_magnitude(mask: torch.Tensor):
         """
-        Compute soft gradient magnitude using Sobel-like filters
+        Compute soft gradient magnitude using Sobel filters
+        mask: (B, C, H, W) tensor
         """
-        # 3x3 Sobel kernels
-        sobel_x = torch.tensor([[[-1, 0, 1],
-                                [-2, 0, 2],
-                                [-1, 0, 1]]], dtype=mask.dtype, device=mask.device).unsqueeze(0).unsqueeze(0)
-        sobel_y = torch.tensor([[[-1, -2, -1],
-                                [ 0,  0,  0],
-                                [ 1,  2,  1]]], dtype=mask.dtype, device=mask.device).unsqueeze(0).unsqueeze(0)
+        B, C, H, W = mask.shape
 
-        grad_x = F.conv2d(mask, sobel_x, padding=1)
-        grad_y = F.conv2d(mask, sobel_y, padding=1)
+        # Sobel filters
+        sobel_x = torch.tensor([[[[-1, 0, 1],
+                                [-2, 0, 2],
+                                [-1, 0, 1]]]], device=mask.device, dtype=mask.dtype).repeat(C, 1, 1, 1)
+        sobel_y = torch.tensor([[[[-1, -2, -1],
+                                [ 0,  0,  0],
+                                [ 1,  2,  1]]]], device=mask.device, dtype=mask.dtype).repeat(C, 1, 1, 1)
+
+        # Depthwise convolution
+        grad_x = F.conv2d(mask, sobel_x, padding=1, groups=C)
+        grad_y = F.conv2d(mask, sobel_y, padding=1, groups=C)
 
         grad_mag = torch.sqrt(grad_x**2 + grad_y**2 + 1e-5)
         return grad_mag
