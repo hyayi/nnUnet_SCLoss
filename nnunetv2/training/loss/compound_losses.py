@@ -818,7 +818,7 @@ class DC_CE_SoftGradientDiffTVLoss(nn.Module):
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
         if ignore_label is not None:
             ce_kwargs['ignore_index'] = ignore_label
-        self.ce = nn.CrossEntropyLoss(**ce_kwargs)
+        self.ce = RobustCrossEntropyLoss(**ce_kwargs)
         self.svt = SoftGradientDiffTVLoss(self.weight_length, self.weight_tv)
 
     def forward(self, net_output: torch.Tensor, target: torch.Tensor):
