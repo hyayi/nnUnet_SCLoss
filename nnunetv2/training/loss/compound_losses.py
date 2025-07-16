@@ -764,7 +764,7 @@ class DC_SoftGradientDiffTVLoss_loss(nn.Module):
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
     
 
-    def forward(self, net_output: torch.Tensor, target: torch.Tensor, skel: torch.Tensor):
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
         """
         target must be b, c, x, y(, z) with c=1
         :param net_output:
