@@ -888,12 +888,10 @@ class DC_and_CE_ClIoULoss(nn.Module):
 
 
 class DC_and_ClIoULoss(nn.Module):
-    def __init__(self, soft_dice_kwargs, ce_kwargs, clioU_kwargs,
+    def __init__(self, soft_dice_kwargs, clioU_kwargs,
                  weight_dice=1, weight_cl=1, ignore_label=None,
                  dice_class=None):
         super().__init__()
-        if ignore_label is not None:
-            ce_kwargs['ignore_index'] = ignore_label
 
         self.weight_dice = weight_dice
         self.weight_cl = weight_cl

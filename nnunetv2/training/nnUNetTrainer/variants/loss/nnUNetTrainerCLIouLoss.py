@@ -17,7 +17,7 @@ class nnUNetTrainerDCCLIoULoss(nnUNetTrainer):
                 'smooth': 1e-5,
                 'ddp': self.is_ddp
             },
-            cl_kwargs={  # 사용되는 clIoU 인자
+            clioU_kwargs={  # 사용되는 clIoU 인자
                 'num_iter': 10,
                 'eps': 1e-6
             },
@@ -48,7 +48,7 @@ class nnUNetTrainerDCCECLIouLoss(nnUNetTrainer):
                 'smooth': 1e-5,
                 'ddp': self.is_ddp
             },
-            cl_kwargs={
+            clioU_kwargs={
                 'num_iter': 10,
                 'eps': 1e-6
             },
@@ -82,7 +82,7 @@ class nnUNetTrainerDCCLIoULossCole(nnUNetTrainerCole):
                 'smooth': 1e-5,
                 'ddp': self.is_ddp
             },
-            cl_kwargs={
+            clioU_kwargs={
                 'num_iter': 10,
                 'eps': 1e-6
             },
@@ -113,7 +113,7 @@ class nnUNetTrainerDCCECLIouLossCole(nnUNetTrainerCole):
                 'smooth': 1e-5,
                 'ddp': self.is_ddp
             },
-            cl_kwargs={
+            clioU_kwargs={
                 'num_iter': 10,
                 'eps': 1e-6
             },
