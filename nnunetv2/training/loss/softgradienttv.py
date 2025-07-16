@@ -12,7 +12,7 @@ class SoftGradientDiffTVLoss(nn.Module):
         self.alpha = alpha
         self.beta = beta
 
-    def soft_gradient_magnitude(mask: torch.Tensor):
+    def soft_gradient_magnitude(self,mask: torch.Tensor):
         """
         Compute soft gradient magnitude using Sobel filters
         mask: (B, C, H, W) tensor
