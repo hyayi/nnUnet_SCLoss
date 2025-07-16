@@ -18,7 +18,7 @@ class nnUNetTrainerSVT(nnUNetTrainer):
             },
             weight_dice=1.0,
             weight_length=1.0,
-            weight_tv=1.0.
+            weight_tv=1.0,
             dice_class=MemoryEfficientSoftDiceLoss
         )
 
@@ -81,7 +81,7 @@ class nnUNetTrainerSVTCole(nnUNetTrainerCole):
             },
             weight_dice=1.0,
             weight_length=1.0,
-            weight_tv=1.0.
+            weight_tv=1.0,
             dice_class=MemoryEfficientSoftDiceLoss
         )
 
