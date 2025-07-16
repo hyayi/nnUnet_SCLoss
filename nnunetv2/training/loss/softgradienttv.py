@@ -40,7 +40,7 @@ class SoftGradientDiffTVLoss(nn.Module):
         """
         tv_h = torch.abs(mask[:, :, 1:, :] - mask[:, :, :-1, :])
         tv_w = torch.abs(mask[:, :, :, 1:] - mask[:, :, :, :-1])
-        tv = torch.sum(tv_h + tv_w) / mask.shape[0]
+        tv = (torch.sum(tv_h) + torch.sum(tv_w))/ mask.shape[0]
         return tv
 
     def forward(self, pred, target):
