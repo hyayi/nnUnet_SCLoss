@@ -10,7 +10,7 @@ from topolosses.losses.hutopo import HutopoLoss
 from topolosses.losses.betti_matching import BettiMatchingLoss
 import torch.nn.functional as F
 import os
-from softgradienttv import SoftGradientDiffTVLoss
+from nnunetv2.training.loss.softgradienttv import SoftGradientDiffTVLoss
 
 class DC_and_CE_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
