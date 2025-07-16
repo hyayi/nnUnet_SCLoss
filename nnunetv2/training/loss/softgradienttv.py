@@ -16,9 +16,14 @@ class SoftGradientDiffTVLoss(nn.Module):
         """
         Compute soft gradient magnitude
         """
-        grad_x = mask[:, :, :, 1:] - mask[:, :, :, :-1]
-        grad_y = mask[:, :, 1:, :] - mask[:, :, :-1, :]
-        grad_mag = torch.sqrt(grad_x[:, :, :, :-1]**2 + grad_y[:, :, :-1, :]**2 + 1e-5)
+        grad_x = mask[:, :, :, 1:] - mask[:, :, :, :-1]  # (B, C, H, W-1)
+        grad_y = mask[:, :, 1:, :] - mask[:, :, :-1, :]  # (B, C, H-1, W)
+
+        # Pad to match size
+        grad_x = F.pad(grad_x, (0, 1))  # pad width to match original W
+        grad_y = F.pad(grad_y, (0, 0, 0, 1))  # pad height to match original H
+
+        grad_mag = torch.sqrt(grad_x**2 + grad_y**2 + 1e-5)
         return grad_mag
 
     def total_variation(self, mask):
