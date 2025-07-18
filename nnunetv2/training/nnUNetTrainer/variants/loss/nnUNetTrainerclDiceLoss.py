@@ -5,9 +5,9 @@ import torch
 
 
 class nnUNetTrainerDiceclCELoss(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
         self.enable_deep_supervision = False
     def _build_loss(self):
         loss = dice_clCE_loss(iter_=3, smooth=1.0, weight_dice=1, weight_clCE=1)
@@ -15,9 +15,9 @@ class nnUNetTrainerDiceclCELoss(nnUNetTrainer):
 
 
 class nnUNetTrainerCEclCEloss(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
 
         self.enable_deep_supervision = False
     def _build_loss(self):
@@ -26,9 +26,9 @@ class nnUNetTrainerCEclCEloss(nnUNetTrainer):
 
 
 class nnUNetTrainerDiceclCELossCole(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
         self.enable_deep_supervision = False
     def _build_loss(self):
         loss = dice_clCE_loss(iter_=3, smooth=1.0, weight_dice=1, weight_clCE=1)
@@ -36,9 +36,9 @@ class nnUNetTrainerDiceclCELossCole(nnUNetTrainer):
 
 
 class nnUNetTrainerCEclCElossCole(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, device)
 
         self.enable_deep_supervision = False
     def _build_loss(self):
