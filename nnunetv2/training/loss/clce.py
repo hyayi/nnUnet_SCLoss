@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss
-from .soft_skeleton import soft_skel
+from .loss_factory import soft_skel
 
 
 def soft_dice(y_pred: torch.Tensor, y_true: torch.Tensor, smooth: float = 1.0) -> torch.Tensor:
