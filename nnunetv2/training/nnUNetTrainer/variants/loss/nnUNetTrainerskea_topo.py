@@ -944,3 +944,15 @@ class nnUNetTrainerSkeaTopoCole(nnUNetTrainer):
         if deep_supervision_scales is not None:
             transforms.append(DownsampleSegForDSTransformWeight(ds_scales=deep_supervision_scales))
         return ComposeTransforms(transforms)
+
+class nnUNetTrainerSkeaTopo2000(nnUNetTrainerSkeaTopo):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.num_epochs = 2000
+
+class nnUNetTrainerSkeaTopoCole2000(nnUNetTrainerSkeaTopoCole):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.num_epochs = 2000
