@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import os
 from nnunetv2.training.loss.softgradienttv import SoftGradientDiffTVLoss
 from nnunetv2.training.loss.cliou import ClIoULoss
+from nnunetv2.training.loss.recall_panelty_loss import SpuriousBranchPenaltyLoss
 
 class DC_and_CE_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
@@ -915,3 +916,86 @@ class DC_and_ClIoULoss(nn.Module):
         cl_loss = self.cliou(net_output, target) if self.weight_cl else 0
 
         return self.weight_dice * dc_loss + self.weight_cl * cl_loss
+    
+
+class TopologyAwareLoss(nn.Module):
+    def __init__(self, soft_dice_kwargs,soft_skelrec_kwargs, topology_kwargs, weight_dice=1, weight_recall=0.5,
+                dice_class=MemoryEfficientSoftDiceLoss):
+        """
+        Dice Loss에 Skeleton Recall과 Spurious Branch Penalty를 결합한 Loss.
+        Penalty의 가중치(lambda)는 epoch에 따라 내부적으로 스케줄링됩니다.
+
+        Args:
+            soft_dice_kwargs (dict): SoftDiceLoss에 전달될 인자.
+            topology_kwargs (dict): Recall 및 Penalty Loss와 스케줄러에 사용될 인자.
+                                    (예: {'iterations': 10, 'total_epochs': 300, ...})
+            weight_dice (float): Dice Loss의 고정 가중치.
+            weight_recall (float): Skeleton Recall Loss의 고정 가중치.
+            dice_class: 사용할 Dice Loss 클래스.
+        """
+        super(TopologyAwareLoss,self).__init__()
+        self.weight_dice = weight_dice
+        self.weight_recall = weight_recall
+
+        # 스케줄러 파라미터 추출
+        self.total_epochs = topology_kwargs.get('total_epochs', 300)
+        self.start_lambda = topology_kwargs.get('start_lambda', 0.1)
+        self.end_lambda = topology_kwargs.get('end_lambda', 1.0)
+        self.ramp_up_fraction = topology_kwargs.get('ramp_up_fraction', 0.4)
+
+        # Loss 함수 인스턴스 생성
+        self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
+        self.srec = SoftSkeletonRecallLoss(apply_nonlin=softmax_helper_dim1,**soft_skelrec_kwargs)
+        self.spen = SpuriousBranchPenaltyLoss(iterations=topology_kwargs.get('iterations', 10),apply_nonlin=softmax_helper_dim1)
+
+    def get_lambda_scheduler(self, current_epoch):
+        ramp_up_epochs = int(self.total_epochs * self.ramp_up_fraction)
+        if current_epoch < ramp_up_epochs:
+            progress = float(current_epoch) / float(ramp_up_epochs)
+            return self.start_lambda + (self.end_lambda - self.start_lambda) * progress
+        else:
+            return self.end_lambda
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor, skel: torch.Tensor, current_epoch: int):
+        # Dice Loss 계산
+        dc_loss = self.dc(net_output, target) if self.weight_dice > 0 else 0
+
+        # Topology-aware Loss 계산
+        srec_loss = self.srec(net_output, skel) if self.weight_recall > 0 else 0
+        
+        # Penalty Loss는 항상 계산 (lambda가 0일 수 있으므로)
+        spen_loss = self.spen(net_output, target)
+
+        # 현재 epoch에 맞는 lambda 값 가져오기
+        lambda_penalty = self.get_lambda_scheduler(current_epoch)
+
+        # 최종 Loss 결합
+        result = self.weight_dice * dc_loss + \
+                self.weight_recall * srec_loss + \
+                lambda_penalty * spen_loss
+        
+        return result
+        
+
+class DC_and_CE_TopologyAwareLoss(TopologyAwareLoss):
+    def __init__(self, soft_dice_kwargs, ce_kwargs, soft_skelrec_kwargs, topology_kwargs, weight_ce=1, weight_dice=1, 
+                 weight_recall=0.5, dice_class=MemoryEfficientSoftDiceLoss):
+        """
+        TopologyAwareLoss에 Cross-Entropy Loss를 추가한 버전.
+        """
+        # 부모 클래스(TopologyAwareLoss)의 초기화 메소드 호출
+        super().__init__(soft_dice_kwargs,soft_skelrec_kwargs, topology_kwargs, weight_dice, weight_recall, dice_class)
+        
+        self.weight_ce = weight_ce
+        self.ce = RobustCrossEntropyLoss(**ce_kwargs)
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor, skel: torch.Tensor, current_epoch: int):
+        # 부모 클래스의 forward를 호출하여 Dice, Recall, Penalty Loss 계산
+        topology_loss = super().forward(net_output, target, skel, current_epoch)
+        
+        # CE Loss 계산
+        ce_loss = self.ce(net_output, target[:, 0].long()) if self.weight_ce > 0 else 0
+        
+        # CE Loss와 부모 클래스에서 계산된 Loss를 결합
+        result = self.weight_ce * ce_loss + topology_loss
+        return result
