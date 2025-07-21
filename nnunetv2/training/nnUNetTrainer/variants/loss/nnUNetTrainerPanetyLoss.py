@@ -656,7 +656,7 @@ class nnUNetTrainerTopologyAwareLossCE(nnUNetTrainerTopologyAwareLoss):
             soft_dice_kwargs={'batch_dice': self.configuration_manager.batch_dice, 
                             'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
             soft_skelrec_kwargs={'batch_dice': self.configuration_manager.batch_dice, 
-                                'smooth': 1e-5, 'do_bg': False}, 
+                                'smooth': 1e-5, 'do_bg': False,'ddp': self.is_ddp}, 
             # ce_kwargs 딕셔너리 추가 및 ignore_label 이동
             ce_kwargs={'ignore_index': self.label_manager.ignore_label} if self.label_manager.has_ignore_label else {},
             # topology_kwargs 추가
@@ -701,7 +701,7 @@ class nnUNetTrainerTopologyAwareLossCEColre(nnUNetTrainerTopologyAwareLossColre)
             soft_dice_kwargs={'batch_dice': self.configuration_manager.batch_dice, 
                             'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, 
             soft_skelrec_kwargs={'batch_dice': self.configuration_manager.batch_dice, 
-                                'smooth': 1e-5, 'do_bg': False}, 
+                                'smooth': 1e-5, 'do_bg': False,'ddp': self.is_ddp}, 
             # ce_kwargs 딕셔너리 추가 및 ignore_label 이동
             ce_kwargs={'ignore_index': self.label_manager.ignore_label} if self.label_manager.has_ignore_label else {},
             # topology_kwargs 추가
