@@ -349,6 +349,38 @@ class DC_and_WassersteinLoss(nn.Module):
         
         return self.weight_dice * dc_loss + self.weight_topo * topo_loss
 
+
+class nnBettiMatchingLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.topo = BettiMatchingLoss(softmax=True,use_base_loss=True,num_processes=os.cpu_count())
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        if target.ndim == net_output.ndim:
+            assert target.shape[1] == 1
+            target = target[:, 0]
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
+        topo_loss = self.topo(net_output, target_onehot)
+        
+        return topo_loss
+
+class nnWassersteinLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.topo = HutopoLoss(softmax=True,use_base_loss=True,num_processes=os.cpu_count())
+
+    def forward(self, net_output: torch.Tensor, target: torch.Tensor):
+        if target.ndim == net_output.ndim:
+            assert target.shape[1] == 1
+            target = target[:, 0]
+        target_onehot = F.one_hot(target.long(), num_classes=net_output.shape[1]) #(B,H,W,C)
+        target_onehot = target_onehot.permute(0, -1, *range(1, target.dim())).float()
+        topo_loss = self.topo(net_output, target_onehot)
+        
+        return topo_loss
+
+
 class DC_SkelREC_loss(nn.Module):
     def __init__(self, soft_dice_kwargs, soft_skelrec_kwargs, weight_dice=1, weight_srec=1, 
                  ignore_label=None, dice_class=MemoryEfficientSoftDiceLoss):
