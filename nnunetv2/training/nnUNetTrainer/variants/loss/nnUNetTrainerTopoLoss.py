@@ -286,3 +286,36 @@ class nnUNetTrainerDCWassersteinLossCECole(nnUNetTrainerCole):
             loss = DeepSupervisionWrapper(loss, weights)
 
         return loss
+    
+
+class nnUNetTrainerBettiLossCole(nnUNetTrainerCole):
+    def _build_loss(self):
+        loss = nnBettiMatchingLoss()
+
+        if self.enable_deep_supervision:
+            deep_supervision_scales = self._get_deep_supervision_scales()
+            weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
+            if self.is_ddp:
+                weights[-1] = 1e-6
+            else:
+                weights[-1] = 0
+            weights = weights / weights.sum()
+            loss = DeepSupervisionWrapper(loss, weights)
+
+        return loss
+
+class nnUNetTrainerWassersteinLossCole(nnUNetTrainerCole):
+    def _build_loss(self):
+        loss = nnWassersteinLoss()
+
+        if self.enable_deep_supervision:
+            deep_supervision_scales = self._get_deep_supervision_scales()
+            weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
+            if self.is_ddp :
+                weights[-1] = 1e-6
+            else:
+                weights[-1] = 0
+            weights = weights / weights.sum()
+            loss = DeepSupervisionWrapper(loss, weights)
+
+        return loss
