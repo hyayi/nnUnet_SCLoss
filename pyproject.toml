@@ -52,7 +52,7 @@ dependencies = [
     "yacs",
     "batchgeneratorsv2>=0.2",
     "einops",
-    "blosc2==2.0.0"
+    "blosc2>=3.0.0b1"
 ]
 
 [project.urls]
