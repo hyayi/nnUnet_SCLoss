@@ -37,7 +37,7 @@ dependencies = [
     "dicom2nifti",
     "scipy==1.15.2",
     "batchgenerators>=0.25.1",
-    "numpy>=1.24,<2",
+    "numpy>=1.24",
     "scikit-learn",
     "scikit-image>=0.19.3",
     "SimpleITK>=2.2.1",
