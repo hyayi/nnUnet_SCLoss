@@ -7,7 +7,7 @@ from torch.nn.modules.dropout import _DropoutNd
 
 from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
 from dynamic_network_architectures.initialization.weight_init import InitWeights_He
-from S3_DSConv_pro import DSConv_pro
+from .S3_DSConv_pro import DSConv_pro
 
 
 class DSConvBlock(nn.Module):
