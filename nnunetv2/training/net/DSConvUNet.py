@@ -7,7 +7,7 @@ from torch.nn.modules.dropout import _DropoutNd
 
 from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
 from dynamic_network_architectures.initialization.weight_init import InitWeights_He
-from .S3_DSConv_pro import DSConv_pro
+from S3_DSConv_pro import DSConv_pro
 
 
 class DSConvBlock(nn.Module):
@@ -164,9 +164,29 @@ class DecoderStage(nn.Module):
         return x
 
 
+class nnUNetDecoder(nn.Module):
+    """
+    nnUNet 호환성을 위한 Decoder Wrapper 클래스
+    """
+    def __init__(self, decoder_stages, deep_supervision_outputs, num_classes, deep_supervision=True):
+        super().__init__()
+        self.stages = decoder_stages
+        self.deep_supervision_outputs = deep_supervision_outputs
+        self.num_classes = num_classes
+        self.deep_supervision = deep_supervision
+        
+    def enable_deep_supervision(self):
+        """Deep supervision 활성화"""
+        self.deep_supervision = True
+        
+    def disable_deep_supervision(self):
+        """Deep supervision 비활성화"""
+        self.deep_supervision = False
+
+
 class DSConvUNet(nn.Module):
     """
-    DSConvUNet - 각 stage에 pooling 포함된 깔끔한 버전
+    DSConvUNet - nnUNet 완전 호환 버전
     """
     def __init__(self,
                  input_channels: int,
@@ -207,6 +227,7 @@ class DSConvUNet(nn.Module):
         self.features_per_stage = features_per_stage
         self.num_classes = num_classes
         self.deep_supervision = deep_supervision
+        self.enable_deep_supervision = deep_supervision  # nnUNet 호환성
         
         # DSConv 설정
         self.dsconv_kernel_size = dsconv_kernel_size
@@ -238,6 +259,11 @@ class DSConvUNet(nn.Module):
             )
             
             self.encoder_stages.append(encoder_stage)
+        
+        # Encoder wrapper (nnUNet 호환성)
+        self.encoder = nn.Module()
+        self.encoder.stages = self.encoder_stages
+        self.encoder.output_channels = features_per_stage
         
         # Decoder stages 구성
         self.decoder_stages = nn.ModuleList()
@@ -272,6 +298,7 @@ class DSConvUNet(nn.Module):
         self.out_conv = nn.Conv2d(features_per_stage[0], num_classes, 1)
         
         # Deep supervision outputs
+        self.deep_supervision_outputs = None
         if deep_supervision:
             self.deep_supervision_outputs = nn.ModuleList()
             for stage_idx in range(n_stages - 1):
@@ -280,8 +307,39 @@ class DSConvUNet(nn.Module):
                     nn.Conv2d(ds_ch, num_classes, 1)
                 )
         
+        # nnUNet 호환성을 위한 Decoder wrapper 생성
+        self.decoder = nnUNetDecoder(
+            decoder_stages=self.decoder_stages,
+            deep_supervision_outputs=self.deep_supervision_outputs,
+            num_classes=num_classes,
+            deep_supervision=deep_supervision
+        )
+        
         # Dropout
         self.dropout = nn.Dropout(0.5)
+    
+    def set_deep_supervision_enabled(self, enabled: bool):
+        """nnUNet 호환성을 위한 deep supervision 제어"""
+        self.deep_supervision = enabled
+        self.enable_deep_supervision = enabled
+        
+        # Decoder의 deep supervision 속성 업데이트
+        if hasattr(self, 'decoder'):
+            self.decoder.deep_supervision = enabled
+            
+        # Deep supervision outputs 제어
+        if self.deep_supervision_outputs is not None:
+            for ds_output in self.deep_supervision_outputs:
+                for param in ds_output.parameters():
+                    param.requires_grad_(enabled)
+    
+    def enable_deep_supervision_training(self):
+        """Deep supervision 활성화 (nnUNet 호환성)"""
+        self.set_deep_supervision_enabled(True)
+    
+    def disable_deep_supervision_training(self):
+        """Deep supervision 비활성화 (nnUNet 호환성)"""
+        self.set_deep_supervision_enabled(False)
     
     def forward(self, x):
         # Encoder forward
@@ -303,14 +361,14 @@ class DSConvUNet(nn.Module):
             x = decoder_stage(x, skip_feature)
             
             # Deep supervision output
-            if self.deep_supervision and stage_idx < len(self.deep_supervision_outputs):
+            if self.deep_supervision and self.deep_supervision_outputs and stage_idx < len(self.deep_supervision_outputs):
                 seg_output = self.deep_supervision_outputs[stage_idx](x)
                 seg_outputs.append(seg_output)
         
         # Final output
         final_output = self.out_conv(x)
         
-        if self.deep_supervision:
+        if self.deep_supervision and seg_outputs:
             seg_outputs.append(final_output)
             return seg_outputs[::-1]  # 깊은 것부터 얕은 것 순서
         else:
@@ -364,11 +422,18 @@ class DSConvUNet(nn.Module):
         print("\n=== Decoder Stages ===")
         for i, stage in enumerate(self.decoder_stages):
             print(f"Stage {i}: DSConv enabled")
+        
+        # nnUNet 호환성 확인
+        print("\n=== nnUNet Compatibility ===")
+        print(f"Has decoder attribute: {hasattr(self, 'decoder')}")
+        print(f"Has encoder attribute: {hasattr(self, 'encoder')}")
+        print(f"Decoder has deep_supervision: {hasattr(self.decoder, 'deep_supervision') if hasattr(self, 'decoder') else False}")
+        print(f"Has set_deep_supervision_enabled method: {hasattr(self, 'set_deep_supervision_enabled')}")
 
 
 # 테스트 코드
 if __name__ == '__main__':
-    print("Testing Clean DSConvUNet...")
+    print("Testing nnUNet Compatible DSConvUNet...")
     
     model = DSConvUNet(
         input_channels=4,
@@ -382,14 +447,23 @@ if __name__ == '__main__':
         n_conv_per_stage_decoder=(2, 2, 2, 2, 2),
         deep_supervision=True,
         dsconv_kernel_size=9
-    ).cuda()
+    )
     
-    print(model)
     model.print_model_info()
-
+    
+    # nnUNet 호환성 테스트
+    print("\n=== nnUNet Compatibility Test ===")
+    
+    # Deep supervision 제어 테스트
+    print("Testing deep supervision control...")
+    model.set_deep_supervision_enabled(False)
+    print(f"Deep supervision disabled: {model.decoder.deep_supervision}")
+    
+    model.set_deep_supervision_enabled(True)
+    print(f"Deep supervision enabled: {model.decoder.deep_supervision}")
     
     # Forward pass 테스트
-    data = torch.rand((2, 4, 256, 256)).cuda()
+    data = torch.rand((2, 4, 256, 256))
     with torch.no_grad():
         output = model(data)
         if isinstance(output, (list, tuple)):
@@ -400,4 +474,4 @@ if __name__ == '__main__':
     # 파라미터 수
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params:,}")
-    print("✅ Clean DSConvUNet test completed!")
+    print("✅ nnUNet Compatible DSConvUNet test completed!")
