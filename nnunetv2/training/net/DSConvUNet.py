@@ -5,9 +5,11 @@ from torch import nn
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
+
 from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
 from dynamic_network_architectures.initialization.weight_init import InitWeights_He
 from .S3_DSConv_pro import DSConv_pro
+
 
 
 class DSConvBlock(nn.Module):
@@ -43,16 +45,24 @@ class DSConvBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         
     def forward(self, x):
+        # 입력 텐서를 연속적으로 만들어 cuDNN 호환성 확보
+        x = x.contiguous()
+        
         # 3개 branch 병렬 실행
         out_standard = self.relu(self.gn_standard(self.conv_standard(x)))
         out_x = self.conv_x(x)  # DSConv는 내부에서 처리
         out_y = self.conv_y(x)  # DSConv는 내부에서 처리
         
-        # Concatenate and fusion
-        concatenated = torch.cat([out_standard, out_x, out_y], dim=1)
+        # Concatenate and fusion - 각 출력도 contiguous 확보
+        concatenated = torch.cat([
+            out_standard.contiguous(), 
+            out_x.contiguous(), 
+            out_y.contiguous()
+        ], dim=1)
         fused = self.relu(self.fusion_gn(self.fusion_conv(concatenated)))
         
-        return fused
+        return fused.contiguous()  # 최종 출력도 contiguous
+
 
 
 class StandardConvBlock(nn.Module):
@@ -66,7 +76,10 @@ class StandardConvBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         
     def forward(self, x):
-        return self.relu(self.gn(self.conv(x)))
+        x = x.contiguous()  # 입력을 contiguous로
+        result = self.relu(self.gn(self.conv(x)))
+        return result.contiguous()  # 출력도 contiguous로
+
 
 
 class EncoderStage(nn.Module):
@@ -103,18 +116,23 @@ class EncoderStage(nn.Module):
         self.pool = nn.MaxPool2d(2) if has_pooling else None
     
     def forward(self, x):
+        # 입력을 contiguous로 만들기
+        x = x.contiguous()
+        
         # Conv blocks 실행
         for block in self.conv_blocks:
             x = block(x)
+            x = x.contiguous()  # 각 블록 후 contiguous 유지
         
         # Skip connection을 위해 pooling 전 feature 저장
-        skip_feature = x
+        skip_feature = x.contiguous()
         
         # Pooling (있는 경우만)
         if self.pool is not None:
-            x = self.pool(x)
+            x = self.pool(x).contiguous()
         
         return x, skip_feature
+
 
 
 class DecoderStage(nn.Module):
@@ -151,17 +169,22 @@ class DecoderStage(nn.Module):
             self.conv_blocks.append(block)
     
     def forward(self, x, skip_feature):
-        # Upsampling
-        x = self.upsample(x)
+        # Upsampling 후 contiguous 확보
+        x = self.upsample(x).contiguous()
         
-        # Skip connection
-        x = torch.cat([x, skip_feature], dim=1)
+        # Skip connection - 양쪽 텐서 모두 contiguous 확보
+        x = torch.cat([
+            x.contiguous(), 
+            skip_feature.contiguous()
+        ], dim=1)
         
         # Conv blocks 실행
         for block in self.conv_blocks:
             x = block(x)
+            x = x.contiguous()  # 각 블록 후에도 contiguous 유지
         
         return x
+
 
 
 class nnUNetDecoder(nn.Module):
@@ -184,9 +207,10 @@ class nnUNetDecoder(nn.Module):
         self.deep_supervision = False
 
 
+
 class DSConvUNet(nn.Module):
     """
-    DSConvUNet - nnUNet 완전 호환 버전
+    DSConvUNet - nnUNet 완전 호환 버전 (cuDNN 호환성 개선)
     """
     def __init__(self,
                  input_channels: int,
@@ -342,12 +366,16 @@ class DSConvUNet(nn.Module):
         self.set_deep_supervision_enabled(False)
     
     def forward(self, x):
+        # 입력 텐서를 먼저 contiguous로 만들기
+        x = x.contiguous()
+        
         # Encoder forward
         skip_features = []
         
         for stage in self.encoder_stages:
             x, skip_feature = stage(x)
-            skip_features.append(skip_feature)
+            # Skip feature도 contiguous 확보
+            skip_features.append(skip_feature.contiguous())
         
         # Decoder forward
         seg_outputs = []  # Deep supervision용
@@ -357,16 +385,16 @@ class DSConvUNet(nn.Module):
             skip_idx = len(skip_features) - 2 - stage_idx
             skip_feature = skip_features[skip_idx]
             
-            # Decoder stage 실행
-            x = decoder_stage(x, skip_feature)
+            # Decoder stage 실행 - 입력도 contiguous 확보
+            x = decoder_stage(x.contiguous(), skip_feature)
             
             # Deep supervision output
             if self.deep_supervision and self.deep_supervision_outputs and stage_idx < len(self.deep_supervision_outputs):
-                seg_output = self.deep_supervision_outputs[stage_idx](x)
+                seg_output = self.deep_supervision_outputs[stage_idx](x.contiguous())
                 seg_outputs.append(seg_output)
         
         # Final output
-        final_output = self.out_conv(x)
+        final_output = self.out_conv(x.contiguous())
         
         if self.deep_supervision and seg_outputs:
             seg_outputs.append(final_output)
@@ -402,7 +430,7 @@ class DSConvUNet(nn.Module):
     
     def print_model_info(self):
         """모델 정보 출력"""
-        print("=== DSConvUNet Information ===")
+        print("=== DSConvUNet Information (cuDNN Compatible) ===")
         print(f"Input channels: {self.input_channels}")
         print(f"Number of stages: {self.n_stages}")
         print(f"Features per stage: {self.features_per_stage}")
@@ -421,7 +449,7 @@ class DSConvUNet(nn.Module):
         # Decoder stages 정보
         print("\n=== Decoder Stages ===")
         for i, stage in enumerate(self.decoder_stages):
-            print(f"Stage {i}: DSConv enabled")
+            print(f"Stage {i}: DSConv enabled, contiguous memory ensured")
         
         # nnUNet 호환성 확인
         print("\n=== nnUNet Compatibility ===")
@@ -429,11 +457,13 @@ class DSConvUNet(nn.Module):
         print(f"Has encoder attribute: {hasattr(self, 'encoder')}")
         print(f"Decoder has deep_supervision: {hasattr(self.decoder, 'deep_supervision') if hasattr(self, 'decoder') else False}")
         print(f"Has set_deep_supervision_enabled method: {hasattr(self, 'set_deep_supervision_enabled')}")
+        print("✅ cuDNN contiguous memory compatibility added")
+
 
 
 # 테스트 코드
 if __name__ == '__main__':
-    print("Testing nnUNet Compatible DSConvUNet...")
+    print("Testing cuDNN Compatible DSConvUNet...")
     
     model = DSConvUNet(
         input_channels=4,
@@ -447,7 +477,7 @@ if __name__ == '__main__':
         n_conv_per_stage_decoder=(2, 2, 2, 2, 2),
         deep_supervision=True,
         dsconv_kernel_size=9
-    )
+    ).cuda()
     
     model.print_model_info()
     
@@ -463,7 +493,7 @@ if __name__ == '__main__':
     print(f"Deep supervision enabled: {model.decoder.deep_supervision}")
     
     # Forward pass 테스트
-    data = torch.rand((2, 4, 256, 256))
+    data = torch.rand((2, 4, 256, 256)).cuda()
     with torch.no_grad():
         output = model(data)
         if isinstance(output, (list, tuple)):
@@ -474,4 +504,4 @@ if __name__ == '__main__':
     # 파라미터 수
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params:,}")
-    print("✅ nnUNet Compatible DSConvUNet test completed!")
+    print("✅ cuDNN Compatible DSConvUNet test completed!")
