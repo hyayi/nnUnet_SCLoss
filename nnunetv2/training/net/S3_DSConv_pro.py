@@ -258,11 +258,11 @@ def get_interpolated_feature(
     grid = torch.cat([x_coordinate_map_, y_coordinate_map_], dim=-1)
 
     interpolated_feature = nn.functional.grid_sample(
-        input=input_feature,
-        grid=grid,
-        mode=interpolate_mode,
-        padding_mode="zeros",
-        align_corners=True,
+        input_feature.contiguous(), 
+        grid.contiguous(), 
+        mode='bilinear', 
+        padding_mode='zeros', 
+        align_corners=True
     )
 
     return interpolated_feature
