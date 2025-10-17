@@ -1,33 +1,25 @@
-# nnunetv2/nets/DSConvUNet.py - 완전 버전
+# nnunetv2/nets/DSConvUNet.py
+from typing import Union, Type, List, Tuple
 import torch
-import torch.utils.checkpoint as checkpoint
 from torch import nn
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
-from typing import Union, Type, List, Tuple
+
 
 from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
 from dynamic_network_architectures.initialization.weight_init import InitWeights_He
+from .S3_DSConv_pro import DSConv_pro
 
-# 절대 경로로 수정 (상대 경로 문제 해결)
-try:
-    from .S3_DSConv_pro import DSConv_pro
-except ImportError:
-    # 절대 경로로 fallback
-    from nnunetv2.training.net.S3_DSConv_pro import DSConv_pro
 
 
 class DSConvBlock(nn.Module):
     """
-    메모리 최적화된 DSConv Multi-View Block
+    DSConv Multi-View Block (원본 DSCNet 스타일)
     일반 conv + x축 DSConv + y축 DSConv → fusion
     """
     def __init__(self, in_channels, out_channels, kernel_size=9, 
-                 extend_scope=1.0, if_offset=True, device='cuda',
-                 use_checkpoint=True):
+                 extend_scope=1.0, if_offset=True, device='cuda'):
         super().__init__()
-        
-        self.use_checkpoint = use_checkpoint
         
         # 1) 일반 convolution branch
         self.conv_standard = nn.Conv2d(in_channels, out_channels, 3, padding=1)
@@ -51,37 +43,15 @@ class DSConvBlock(nn.Module):
         
         # 5) Activation
         self.relu = nn.ReLU(inplace=True)
-    
-    def _forward_standard_branch(self, x):
-        """표준 convolution branch (checkpoint용)"""
-        return self.relu(self.gn_standard(self.conv_standard(x)))
-    
-    def _forward_dsconv_x_branch(self, x):
-        """x축 DSConv branch (checkpoint용)"""
-        return self.conv_x(x)
-    
-    def _forward_dsconv_y_branch(self, x):
-        """y축 DSConv branch (checkpoint용)"""
-        return self.conv_y(x)
-    
-    def _forward_fusion(self, concatenated):
-        """Fusion layer (checkpoint용)"""
-        return self.relu(self.fusion_gn(self.fusion_conv(concatenated)))
         
     def forward(self, x):
         # 입력 텐서를 연속적으로 만들어 cuDNN 호환성 확보
         x = x.contiguous()
         
-        if self.use_checkpoint and x.requires_grad:
-            # Gradient checkpointing으로 각 branch 처리
-            out_standard = checkpoint.checkpoint(self._forward_standard_branch, x, use_reentrant=False)
-            out_x = checkpoint.checkpoint(self._forward_dsconv_x_branch, x, use_reentrant=False)
-            out_y = checkpoint.checkpoint(self._forward_dsconv_y_branch, x, use_reentrant=False)
-        else:
-            # 일반 처리
-            out_standard = self._forward_standard_branch(x)
-            out_x = self._forward_dsconv_x_branch(x)
-            out_y = self._forward_dsconv_y_branch(x)
+        # 3개 branch 병렬 실행
+        out_standard = self.relu(self.gn_standard(self.conv_standard(x)))
+        out_x = self.conv_x(x)  # DSConv는 내부에서 처리
+        out_y = self.conv_y(x)  # DSConv는 내부에서 처리
         
         # Concatenate and fusion - 각 출력도 contiguous 확보
         concatenated = torch.cat([
@@ -89,52 +59,37 @@ class DSConvBlock(nn.Module):
             out_x.contiguous(), 
             out_y.contiguous()
         ], dim=1)
+        fused = self.relu(self.fusion_gn(self.fusion_conv(concatenated)))
         
-        # Fusion도 checkpoint 적용
-        if self.use_checkpoint and concatenated.requires_grad:
-            fused = checkpoint.checkpoint(self._forward_fusion, concatenated, use_reentrant=False)
-        else:
-            fused = self._forward_fusion(concatenated)
-        
-        return fused.contiguous()
+        return fused.contiguous()  # 최종 출력도 contiguous
+
 
 
 class StandardConvBlock(nn.Module):
     """
-    메모리 최적화된 일반 convolution block (DSConv 없는 구간용)
+    일반 convolution block (DSConv 없는 구간용)
     """
-    def __init__(self, in_channels, out_channels, use_checkpoint=True):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.use_checkpoint = use_checkpoint
         self.conv = nn.Conv2d(in_channels, out_channels, 3, padding=1)
         self.gn = nn.GroupNorm(out_channels // 4, out_channels)
         self.relu = nn.ReLU(inplace=True)
-    
-    def _forward_impl(self, x):
-        """실제 forward 구현 (checkpoint용)"""
-        return self.relu(self.gn(self.conv(x)))
         
     def forward(self, x):
-        x = x.contiguous()
-        
-        if self.use_checkpoint and x.requires_grad:
-            result = checkpoint.checkpoint(self._forward_impl, x, use_reentrant=False)
-        else:
-            result = self._forward_impl(x)
-            
-        return result.contiguous()
+        x = x.contiguous()  # 입력을 contiguous로
+        result = self.relu(self.gn(self.conv(x)))
+        return result.contiguous()  # 출력도 contiguous로
+
 
 
 class EncoderStage(nn.Module):
     """
-    메모리 최적화된 Encoder Stage = Conv blocks + Pooling (마지막 stage 제외)
+    Encoder Stage = Conv blocks + Pooling (마지막 stage 제외)
     """
     def __init__(self, in_channels, out_channels, n_conv_blocks, 
                  use_dsconv=False, dsconv_kernel_size=9, extend_scope=1.0, 
-                 if_offset=True, has_pooling=True, use_checkpoint=True):
+                 if_offset=True, has_pooling=True):
         super().__init__()
-        
-        self.use_checkpoint = use_checkpoint
         
         # Conv blocks
         self.conv_blocks = nn.ModuleList()
@@ -149,37 +104,25 @@ class EncoderStage(nn.Module):
                     kernel_size=dsconv_kernel_size,
                     extend_scope=extend_scope,
                     if_offset=if_offset,
-                    device='cuda',
-                    use_checkpoint=use_checkpoint
+                    device='cuda'
                 )
             else:
                 # 나머지는 일반 conv
-                block = StandardConvBlock(
-                    block_in_ch, out_channels,
-                    use_checkpoint=use_checkpoint
-                )
+                block = StandardConvBlock(block_in_ch, out_channels)
             
             self.conv_blocks.append(block)
         
         # Pooling (마지막 stage가 아닌 경우만)
         self.pool = nn.MaxPool2d(2) if has_pooling else None
     
-    def _forward_conv_blocks(self, x):
-        """Conv blocks 처리 (checkpoint용)"""
-        for block in self.conv_blocks:
-            x = block(x)
-            x = x.contiguous()
-        return x
-    
     def forward(self, x):
         # 입력을 contiguous로 만들기
         x = x.contiguous()
         
-        # Conv blocks 실행 (checkpoint 적용)
-        if self.use_checkpoint and x.requires_grad and len(self.conv_blocks) > 1:
-            x = checkpoint.checkpoint(self._forward_conv_blocks, x, use_reentrant=False)
-        else:
-            x = self._forward_conv_blocks(x)
+        # Conv blocks 실행
+        for block in self.conv_blocks:
+            x = block(x)
+            x = x.contiguous()  # 각 블록 후 contiguous 유지
         
         # Skip connection을 위해 pooling 전 feature 저장
         skip_feature = x.contiguous()
@@ -191,23 +134,21 @@ class EncoderStage(nn.Module):
         return x, skip_feature
 
 
+
 class DecoderStage(nn.Module):
     """
-    메모리 최적화된 Decoder Stage = Upsample + Skip Connection + Conv blocks
+    Decoder Stage = Upsample + Skip Connection + Conv blocks
     """
     def __init__(self, in_channels, skip_channels, out_channels, n_conv_blocks,
-                 use_dsconv=True, dsconv_kernel_size=9, extend_scope=1.0, 
-                 if_offset=True, use_checkpoint=True):
+                 use_dsconv=True, dsconv_kernel_size=9, extend_scope=1.0, if_offset=True):
         super().__init__()
-        
-        self.use_checkpoint = use_checkpoint
         
         # Upsampling
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         
         # Conv blocks (skip connection 후)
         self.conv_blocks = nn.ModuleList()
-        concat_channels = in_channels + skip_channels
+        concat_channels = in_channels + skip_channels  # upsampled + skip
         
         for block_idx in range(n_conv_blocks):
             block_in_ch = concat_channels if block_idx == 0 else out_channels
@@ -219,24 +160,13 @@ class DecoderStage(nn.Module):
                     kernel_size=dsconv_kernel_size,
                     extend_scope=extend_scope,
                     if_offset=if_offset,
-                    device='cuda',
-                    use_checkpoint=use_checkpoint
+                    device='cuda'
                 )
             else:
                 # 나머지는 일반 conv
-                block = StandardConvBlock(
-                    block_in_ch, out_channels,
-                    use_checkpoint=use_checkpoint
-                )
+                block = StandardConvBlock(block_in_ch, out_channels)
             
             self.conv_blocks.append(block)
-    
-    def _forward_conv_blocks(self, x):
-        """Conv blocks 처리 (checkpoint용)"""
-        for block in self.conv_blocks:
-            x = block(x)
-            x = x.contiguous()
-        return x
     
     def forward(self, x, skip_feature):
         # Upsampling 후 contiguous 확보
@@ -248,13 +178,13 @@ class DecoderStage(nn.Module):
             skip_feature.contiguous()
         ], dim=1)
         
-        # Conv blocks 실행 (checkpoint 적용)
-        if self.use_checkpoint and x.requires_grad and len(self.conv_blocks) > 1:
-            x = checkpoint.checkpoint(self._forward_conv_blocks, x, use_reentrant=False)
-        else:
-            x = self._forward_conv_blocks(x)
+        # Conv blocks 실행
+        for block in self.conv_blocks:
+            x = block(x)
+            x = x.contiguous()  # 각 블록 후에도 contiguous 유지
         
         return x
+
 
 
 class nnUNetDecoder(nn.Module):
@@ -277,9 +207,10 @@ class nnUNetDecoder(nn.Module):
         self.deep_supervision = False
 
 
+
 class DSConvUNet(nn.Module):
     """
-    Gradient Checkpointing이 적용된 메모리 최적화 DSConvUNet - nnUNet 완전 호환 버전
+    DSConvUNet - nnUNet 완전 호환 버전 (cuDNN 호환성 개선)
     """
     def __init__(self,
                  input_channels: int,
@@ -303,16 +234,9 @@ class DSConvUNet(nn.Module):
                  # DSConv parameters
                  dsconv_kernel_size: int = 9,
                  extend_scope: float = 1.0,
-                 if_offset: bool = True,
-                 # 메모리 최적화 parameters
-                 use_gradient_checkpointing: bool = False,
-                 checkpoint_segments: int = 2
+                 if_offset: bool = True
                  ):
         super().__init__()
-        
-        # 메모리 최적화 설정
-        self.use_gradient_checkpointing = use_gradient_checkpointing
-        self.checkpoint_segments = checkpoint_segments
         
         # 파라미터 정규화
         if isinstance(n_conv_per_stage, int):
@@ -334,7 +258,7 @@ class DSConvUNet(nn.Module):
         self.extend_scope = extend_scope
         self.if_offset = if_offset
         
-        # Encoder stages 구성 (checkpoint 적용)
+        # Encoder stages 구성 (pooling 포함)
         self.encoder_stages = nn.ModuleList()
         
         for stage_idx in range(n_stages):
@@ -355,8 +279,7 @@ class DSConvUNet(nn.Module):
                 dsconv_kernel_size=dsconv_kernel_size,
                 extend_scope=extend_scope,
                 if_offset=if_offset,
-                has_pooling=has_pooling,
-                use_checkpoint=self.use_gradient_checkpointing
+                has_pooling=has_pooling
             )
             
             self.encoder_stages.append(encoder_stage)
@@ -366,7 +289,7 @@ class DSConvUNet(nn.Module):
         self.encoder.stages = self.encoder_stages
         self.encoder.output_channels = features_per_stage
         
-        # Decoder stages 구성 (checkpoint 적용)
+        # Decoder stages 구성
         self.decoder_stages = nn.ModuleList()
         
         for stage_idx in range(n_stages - 1):
@@ -390,8 +313,7 @@ class DSConvUNet(nn.Module):
                 use_dsconv=True,  # decoder에서는 무조건 DSConv
                 dsconv_kernel_size=dsconv_kernel_size,
                 extend_scope=extend_scope,
-                if_offset=if_offset,
-                use_checkpoint=self.use_gradient_checkpointing
+                if_offset=if_offset
             )
             
             self.decoder_stages.append(decoder_stage)
@@ -443,33 +365,7 @@ class DSConvUNet(nn.Module):
         """Deep supervision 비활성화 (nnUNet 호환성)"""
         self.set_deep_supervision_enabled(False)
     
-    def enable_checkpointing(self):
-        """런타임에 checkpointing 활성화"""
-        self.use_gradient_checkpointing = True
-        for stage in self.encoder_stages + self.decoder_stages:
-            if hasattr(stage, 'use_checkpoint'):
-                stage.use_checkpoint = True
-            for block in stage.conv_blocks:
-                if hasattr(block, 'use_checkpoint'):
-                    block.use_checkpoint = True
-    
-    def disable_checkpointing(self):
-        """런타임에 checkpointing 비활성화 (추론 시)"""
-        self.use_gradient_checkpointing = False
-        for stage in self.encoder_stages + self.decoder_stages:
-            if hasattr(stage, 'use_checkpoint'):
-                stage.use_checkpoint = False
-            for block in stage.conv_blocks:
-                if hasattr(block, 'use_checkpoint'):
-                    block.use_checkpoint = False
-    
     def forward(self, x):
-        # 학습 중에만 checkpointing 활성화
-        if self.training and self.use_gradient_checkpointing:
-            self.enable_checkpointing()
-        else:
-            self.disable_checkpointing()
-        
         # 입력 텐서를 먼저 contiguous로 만들기
         x = x.contiguous()
         
@@ -533,16 +429,14 @@ class DSConvUNet(nn.Module):
         InitWeights_He(1e-2)(module)
     
     def print_model_info(self):
-        """모델 정보 출력 (메모리 최적화 정보 포함)"""
-        print("=== Memory-Optimized DSConvUNet Information ===")
+        """모델 정보 출력"""
+        print("=== DSConvUNet Information (cuDNN Compatible) ===")
         print(f"Input channels: {self.input_channels}")
         print(f"Number of stages: {self.n_stages}")
         print(f"Features per stage: {self.features_per_stage}")
         print(f"Number of classes: {self.num_classes}")
         print(f"Deep supervision: {self.deep_supervision}")
         print(f"DSConv kernel size: {self.dsconv_kernel_size}")
-        print(f"🔧 Gradient Checkpointing: {self.use_gradient_checkpointing}")
-        print(f"🔧 Checkpoint Segments: {self.checkpoint_segments}")
         
         # Encoder stages 정보
         print("\n=== Encoder Stages ===")
@@ -555,7 +449,7 @@ class DSConvUNet(nn.Module):
         # Decoder stages 정보
         print("\n=== Decoder Stages ===")
         for i, stage in enumerate(self.decoder_stages):
-            print(f"Stage {i}: DSConv enabled, checkpoint optimized")
+            print(f"Stage {i}: DSConv enabled, contiguous memory ensured")
         
         # nnUNet 호환성 확인
         print("\n=== nnUNet Compatibility ===")
@@ -563,21 +457,13 @@ class DSConvUNet(nn.Module):
         print(f"Has encoder attribute: {hasattr(self, 'encoder')}")
         print(f"Decoder has deep_supervision: {hasattr(self.decoder, 'deep_supervision') if hasattr(self, 'decoder') else False}")
         print(f"Has set_deep_supervision_enabled method: {hasattr(self, 'set_deep_supervision_enabled')}")
-        
-        # 메모리 사용량 추정
-        total_params = sum(p.numel() for p in self.parameters())
-        print(f"Total parameters: {total_params:,}")
-        
-        if self.use_gradient_checkpointing:
-            print("메모리 사용량 약 50-70% 절약 예상 (시간 10-20% 증가)")
-        else:
-            print("Full gradient storage (높은 메모리 사용량)")
-        print("cuDNN contiguous memory compatibility added")
+        print("✅ cuDNN contiguous memory compatibility added")
+
 
 
 # 테스트 코드
 if __name__ == '__main__':
-    print("Testing Complete Memory-Optimized DSConvUNet...")
+    print("Testing cuDNN Compatible DSConvUNet...")
     
     model = DSConvUNet(
         input_channels=4,
@@ -590,15 +476,13 @@ if __name__ == '__main__':
         num_classes=3,
         n_conv_per_stage_decoder=(2, 2, 2, 2, 2),
         deep_supervision=True,
-        dsconv_kernel_size=9,
-        use_gradient_checkpointing=True  # 메모리 최적화 활성화
+        dsconv_kernel_size=9
     ).cuda()
     
     model.print_model_info()
     
     # nnUNet 호환성 테스트
     print("\n=== nnUNet Compatibility Test ===")
-    print(model)
     
     # Deep supervision 제어 테스트
     print("Testing deep supervision control...")
@@ -609,20 +493,15 @@ if __name__ == '__main__':
     print(f"Deep supervision enabled: {model.decoder.deep_supervision}")
     
     # Forward pass 테스트
-    print("\n=== 메모리 최적화 테스트 ===")
-    data = torch.rand((1, 4, 640, 768)).cuda()  # 작은 크기로 테스트
+    data = torch.rand((2, 4, 256, 256)).cuda()
+    with torch.no_grad():
+        output = model(data)
+        if isinstance(output, (list, tuple)):
+            print(f"\n✅ Output shapes (deep supervision): {[x.shape for x in output]}")
+        else:
+            print(f"\n✅ Output shape: {output.shape}")
     
-    print("Gradient Checkpointing 활성화 상태로 forward pass 테스트...")
-    try:
-        model.train()  # 학습 모드
-        with torch.cuda.amp.autocast():  # Mixed precision 함께 사용
-            output = model(data)
-            if isinstance(output, (list, tuple)):
-                print(f"출력 형태 (deep supervision): {[x.shape for x in output]}")
-            else:
-                print(f"출력 형태: {output.shape}")
-        print("메모리 최적화 성공!")
-    except RuntimeError as e:
-        print(f"오류: {e}")
-    
-    print("Complete Memory-Optimized DSConvUNet 준비 완료!")
+    # 파라미터 수
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total_params:,}")
+    print("✅ cuDNN Compatible DSConvUNet test completed!")
