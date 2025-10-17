@@ -305,7 +305,7 @@ class DSConvUNet(nn.Module):
                  extend_scope: float = 1.0,
                  if_offset: bool = True,
                  # 메모리 최적화 parameters
-                 use_gradient_checkpointing: bool = True,
+                 use_gradient_checkpointing: bool = False,
                  checkpoint_segments: int = 2
                  ):
         super().__init__()
