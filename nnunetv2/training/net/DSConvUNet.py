@@ -233,13 +233,26 @@ class DSCEncoder(nn.Module):
         return skips if self.return_skips else skips[-1]
 
 class DSCDecoder(nn.Module):
-    def __init__(self, encoder, num_classes, n_conv_per_stage, deep_supervision, nonlin_first=False, conv_bias=None, norm_op=None, norm_op_kwargs=None, dropout_op=None, dropout_op_kwargs=None, nonlin=None, nonlin_kwargs=None):
+    def __init__(self,
+                 encoder: DSCEncoder,
+                 num_classes: int,
+                 n_conv_per_stage: Union[int, Tuple[int, ...], List[int]],
+                 deep_supervision,
+                 nonlin_first: bool = False,
+                 conv_bias: bool = None,
+                 norm_op: Union[None, Type[nn.Module]] = None,
+                 norm_op_kwargs: dict = None,
+                 dropout_op: Union[None, Type[_DropoutNd]] = None,
+                 dropout_op_kwargs: dict = None,
+                 nonlin: Union[None, Type[torch.nn.Module]] = None,
+                 nonlin_kwargs: dict = None):
         super().__init__()
         self.deep_supervision = deep_supervision
         self.encoder = encoder
         self.num_classes = num_classes
         n_stages_encoder = len(encoder.output_channels)
-        if isinstance(n_conv_per_stage, int): n_conv_per_stage = [n_conv_per_stage] * (n_stages_encoder - 1)
+        if isinstance(n_conv_per_stage, int):
+            n_conv_per_stage = [n_conv_per_stage] * (n_stages_encoder - 1)
 
         transpconv_op = get_matching_convtransp(conv_op=encoder.conv_op)
         conv_bias = encoder.conv_bias if conv_bias is None else conv_bias
@@ -248,31 +261,42 @@ class DSCDecoder(nn.Module):
         nonlin, nonlin_kwargs = (encoder.nonlin, encoder.nonlin_kwargs) if nonlin is None else (nonlin, nonlin_kwargs)
         device = encoder.device
 
-        self.stages, self.transpconvs, self.seg_layers = nn.ModuleList(), nn.ModuleList(), nn.ModuleList()
+        self.stages = nn.ModuleList()
+        self.transpconvs = nn.ModuleList()
+        self.seg_layers = nn.ModuleList() # final_seg_layer 제거
+
+        # ✅ 수정: UNetDecoder와 동일하게 모든 스테이지에 대해 seg_layer 생성
         for s in range(1, n_stages_encoder):
             input_features_below, input_features_skip = encoder.output_channels[-s], encoder.output_channels[-(s + 1)]
             self.transpconvs.append(transpconv_op(input_features_below, input_features_skip, encoder.strides[-s], encoder.strides[-s], bias=conv_bias))
             self.stages.append(StackedDSCBlocks(n_conv_per_stage[s-1], encoder.conv_op, 2 * input_features_skip, input_features_skip, encoder.kernel_sizes[-(s+1)], 1, encoder.dsc_kernel_size, encoder.dsc_extend_scope, encoder.dsc_if_offset, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first, device))
-            if self.deep_supervision and s < (n_stages_encoder - 1):
-                self.seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
-        
-        self.final_seg_layer = encoder.conv_op(encoder.output_channels[0], num_classes, 1, 1, 0, bias=True)
+            
+            # 모든 스테이지에 대해 seg_layer 추가 (UNetDecoder 방식)
+            self.seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
 
     def forward(self, skips):
         lres_input = skips[-1]
         seg_outputs = []
+        
+        # ✅ 수정: UNetDecoder의 forward 로직과 완전히 동일하게 변경
         for s in range(len(self.stages)):
             x = self.transpconvs[s](lres_input)
             x = torch.cat((x, skips[-(s+2)]), 1)
             x = self.stages[s](x)
-            if self.deep_supervision and s < len(self.seg_layers):
+            
+            # UNetDecoder 로직: deep_supervision이 켜져 있거나, 마지막 스테이지일 때만 출력 추가
+            if self.deep_supervision:
                 seg_outputs.append(self.seg_layers[s](x))
+            elif s == (len(self.stages) - 1): # deep_supervision 꺼져있으면 마지막만 추가
+                 seg_outputs.append(self.seg_layers[-1](x)) # self.seg_layers[-1] 사용
+                 
             lres_input = x
         
-        seg_outputs.reverse()
-        seg_outputs.insert(0, self.final_seg_layer(lres_input))
+        # 고해상도 출력이 맨 앞에 오도록 리스트 뒤집기 (UNetDecoder 방식)
+        seg_outputs = seg_outputs[::-1]
+        
+        # deep_supervision 플래그에 따라 반환 값 결정 (UNetDecoder 방식)
         return seg_outputs if self.deep_supervision else seg_outputs[0]
-
 # =====================================================================================
 # 4. 최종 DSCUNet 모델 (유연한 파라미터 처리 및 device 전달 기능 포함)
 # =====================================================================================
