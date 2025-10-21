@@ -16,14 +16,23 @@ class nnUNetTrainerDSCResidual(nnUNetTrainer):
     - 파라미터 처리를 간소화하고 nnU-Net의 plans.json 설정을 존중합니다.
     - Deep Supervision 설정을 동적으로 받아옵니다.
     """
-
+    def __init__(
+        self,
+        plans: dict,
+        configuration: str,
+        fold: int,
+        dataset_json: dict,
+        device: torch.device = torch.device("cuda"),
+    ):
+        super().__init__(plans, configuration, fold, dataset_json, device)
+        self.enable_deep_supervision = False
     @staticmethod
     def build_network_architecture(architecture_class_name: str,
                                    arch_init_kwargs: dict,
                                    arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
                                    num_input_channels: int,
                                    num_output_channels: int,
-                                   enable_deep_supervision: bool = True) -> nn.Module:
+                                   enable_deep_supervision: bool = False) -> nn.Module:
         """
         nnU-Net의 plans.json 파일로부터 받은 파라미터를 사용하여
         CompleteDSCResidualUNet 네트워크를 빌드합니다.
