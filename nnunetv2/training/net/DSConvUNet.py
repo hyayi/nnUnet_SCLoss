@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # F (functional) 임포트
 import numpy as np
 from typing import Union, Type, List, Tuple
 import warnings
@@ -14,131 +15,11 @@ from dynamic_network_architectures.initialization.weight_init import InitWeights
 warnings.filterwarnings("ignore")
 
 # =====================================================================================
-# 1. Dynamic Snake Convolution 원본 코드 (인덱싱 버그가 수정된 최종 버전)
+# 1. Dynamic Snake Convolution (수정된 버전)
+# - DSC 클래스 제거, DSConv 모듈로 통합
+# - for 루프 -> torch.cumsum
+# - 수동 interpolate -> F.grid_sample
 # =====================================================================================
-
-class DSC(object):
-    """
-    DSConv의 핵심 변형 연산을 수행하는 헬퍼 클래스.
-    - NaN/inf 값으로 인한 인덱싱 오류를 방지하는 안전장치 포함.
-    """
-    def __init__(self, input_shape, kernel_size, extend_scope, morph, device):
-        self.num_points = kernel_size
-        self.width = input_shape[2]
-        self.height = input_shape[3]
-        self.morph = morph
-        self.device = device
-        self.extend_scope = extend_scope
-        self.num_batch = input_shape[0]
-        self.num_channels = input_shape[1]
-
-    def _coordinate_map_3D(self, offset, if_offset):
-        y_offset, x_offset = torch.split(offset, self.num_points, dim=1)
-        
-        y_center = torch.arange(0, self.width, device=self.device).repeat(self.height).reshape(self.height, self.width).permute(1, 0).reshape(-1, self.width, self.height).repeat(self.num_points, 1, 1).float().unsqueeze(0)
-        x_center = torch.arange(0, self.height, device=self.device).repeat(self.width).reshape(self.width, self.height).reshape(-1, self.width, self.height).repeat(self.num_points, 1, 1).float().unsqueeze(0)
-
-        if self.morph == 0:
-            y = torch.linspace(0, 0, 1, device=self.device)
-            x = torch.linspace(-int(self.num_points // 2), int(self.num_points // 2), self.num_points, device=self.device)
-            y_grid, x_grid = torch.meshgrid(y, x, indexing='ij')
-            y_grid = y_grid.reshape(-1, 1).repeat(1, self.width * self.height).reshape(self.num_points, self.width, self.height).unsqueeze(0)
-            x_grid = x_grid.reshape(-1, 1).repeat(1, self.width * self.height).reshape(self.num_points, self.width, self.height).unsqueeze(0)
-            
-            y_new = (y_center + y_grid).repeat(self.num_batch, 1, 1, 1)
-            x_new = (x_center + x_grid).repeat(self.num_batch, 1, 1, 1)
-
-            if if_offset:
-                y_offset_new = y_offset.detach().clone().permute(1, 0, 2, 3)
-                y_offset_permuted = y_offset.permute(1, 0, 2, 3)
-                center = self.num_points // 2
-                y_offset_new[center] = 0
-                for index in range(1, center + 1):
-                    if center + index < y_offset_new.shape[0]:
-                        y_offset_new[center + index] = y_offset_new[center + index - 1] + y_offset_permuted[center + index]
-                    if center - index >= 0:
-                        y_offset_new[center - index] = y_offset_new[center - index + 1] + y_offset_permuted[center - index]
-                y_new = y_new.add(y_offset_new.permute(1, 0, 2, 3).mul(self.extend_scope))
-
-            y_new = y_new.reshape(self.num_batch, self.num_points, 1, self.width, self.height).permute(0, 3, 1, 4, 2).reshape(self.num_batch, self.num_points * self.width, self.height)
-            x_new = x_new.reshape(self.num_batch, self.num_points, 1, self.width, self.height).permute(0, 3, 1, 4, 2).reshape(self.num_batch, self.num_points * self.width, self.height)
-            return y_new, x_new
-        else: # morph == 1
-            y = torch.linspace(-int(self.num_points // 2), int(self.num_points // 2), self.num_points, device=self.device)
-            x = torch.linspace(0, 0, 1, device=self.device)
-            y_grid, x_grid = torch.meshgrid(y, x, indexing='ij')
-            y_grid = y_grid.reshape(-1, 1).repeat(1, self.width * self.height).reshape(self.num_points, self.width, self.height).unsqueeze(0)
-            x_grid = x_grid.reshape(-1, 1).repeat(1, self.width * self.height).reshape(self.num_points, self.width, self.height).unsqueeze(0)
-
-            y_new = (y_center + y_grid).repeat(self.num_batch, 1, 1, 1)
-            x_new = (x_center + x_grid).repeat(self.num_batch, 1, 1, 1)
-            
-            if if_offset:
-                x_offset_new = x_offset.detach().clone().permute(1, 0, 2, 3)
-                x_offset_permuted = x_offset.permute(1, 0, 2, 3)
-                center = self.num_points // 2
-                x_offset_new[center] = 0
-                for index in range(1, center + 1):
-                    if center + index < x_offset_new.shape[0]:
-                        x_offset_new[center + index] = x_offset_new[center + index - 1] + x_offset_permuted[center + index]
-                    if center - index >= 0:
-                        x_offset_new[center - index] = x_offset_new[center - index + 1] + x_offset_permuted[center - index]
-                x_new = x_new.add(x_offset_new.permute(1, 0, 2, 3).mul(self.extend_scope))
-            
-            y_new = y_new.reshape(self.num_batch, 1, self.num_points, self.width, self.height).permute(0, 3, 1, 4, 2).reshape(self.num_batch, self.width, self.num_points * self.height)
-            x_new = x_new.reshape(self.num_batch, 1, self.num_points, self.width, self.height).permute(0, 3, 1, 4, 2).reshape(self.num_batch, self.width, self.num_points * self.height)
-            return y_new, x_new
-
-    def _bilinear_interpolate_3D(self, input_feature, y, x):
-        # 1. NaN/inf를 안전한 값 0으로 변환
-        y = torch.nan_to_num(y.reshape([-1]).float(), nan=0.0, posinf=0.0, neginf=0.0)
-        x = torch.nan_to_num(x.reshape([-1]).float(), nan=0.0, posinf=0.0, neginf=0.0)
-
-        zero = torch.tensor(0, device=self.device, dtype=torch.int32)
-        max_y, max_x = self.width - 1, self.height - 1
-
-        y0 = torch.floor(y).int()
-        y1 = y0 + 1
-        x0 = torch.floor(x).int()
-        x1 = x0 + 1
-
-        # 2. 인덱싱에 사용할 최종 좌표를 유효한 범위로 강제 제한 (clamping)
-        y0, y1 = torch.clamp(y0, zero, max_y), torch.clamp(y1, zero, max_y)
-        x0, x1 = torch.clamp(x0, zero, max_x), torch.clamp(x1, zero, max_x)
-        
-        input_feature_flat = input_feature.permute(0, 2, 3, 1).reshape(-1, self.num_channels)
-        dimension = self.height * self.width
-        base = (torch.arange(self.num_batch, device=self.device) * dimension).reshape(-1, 1).float()
-        repeat = torch.ones([y.shape[0] // self.num_batch], device=self.device).unsqueeze(0).float()
-        base = torch.matmul(base, repeat).reshape(-1)
-
-        base_y0, base_y1 = (base + (y0 * self.height).long()), (base + (y1 * self.height).long())
-        idx_a, idx_b = (base_y0 + x0).long(), (base_y1 + x0).long()
-        idx_c, idx_d = (base_y0 + x1).long(), (base_y1 + x1).long()
-        
-        max_idx = input_feature_flat.shape[0] - 1
-        idx_a, idx_b = torch.clamp(idx_a, 0, max_idx), torch.clamp(idx_b, 0, max_idx)
-        idx_c, idx_d = torch.clamp(idx_c, 0, max_idx), torch.clamp(idx_d, 0, max_idx)
-
-        value_a, value_b = input_feature_flat[idx_a], input_feature_flat[idx_b]
-        value_c, value_d = input_feature_flat[idx_c], input_feature_flat[idx_d]
-
-        vol_a = ((y1.float() - y) * (x1.float() - x)).unsqueeze(-1)
-        vol_b = ((y - y0.float()) * (x1.float() - x)).unsqueeze(-1)
-        vol_c = ((y1.float() - y) * (x - x0.float())).unsqueeze(-1)
-        vol_d = ((y - y0.float()) * (x - x0.float())).unsqueeze(-1)
-
-        outputs = value_a * vol_a + value_b * vol_b + value_c * vol_c + value_d * vol_d
-
-        if self.morph == 0:
-            outputs = outputs.reshape(self.num_batch, self.num_points * self.width, self.height, self.num_channels).permute(0, 3, 1, 2)
-        else:
-            outputs = outputs.reshape(self.num_batch, self.width, self.num_points * self.height, self.num_channels).permute(0, 3, 1, 2)
-        return outputs
-
-    def deform_conv(self, input_tensor, offset, if_offset):
-        y, x = self._coordinate_map_3D(offset, if_offset)
-        return self._bilinear_interpolate_3D(input_tensor, y, x)
 
 class DSConv(nn.Module):
     def __init__(self, in_ch, out_ch, kernel_size, extend_scope, morph, if_offset, device):
@@ -150,24 +31,139 @@ class DSConv(nn.Module):
         self.dsc_conv_y = nn.Conv2d(in_ch, out_ch, (1, kernel_size), stride=(1, kernel_size), padding=0)
         self.gn = nn.GroupNorm(out_ch // 4 if out_ch > 1 and out_ch % 4 == 0 else 1, out_ch)
         self.relu = nn.ReLU(inplace=True)
-        self.extend_scope, self.morph, self.if_offset, self.device = extend_scope, morph, if_offset, device
+        
+        # DSC 헬퍼 클래스의 속성들을 DSConv가 직접 저장
+        self.extend_scope = extend_scope
+        self.morph = morph
+        self.if_offset = if_offset
+        self.device = device
 
     def forward(self, f):
+        B, C, W, H = f.shape  # ✅ 입력 텐서에서 동적으로 Shape 가져오기
         offset = self.offset_conv(f)
         offset = torch.tanh(self.bn(offset))
-        dsc = DSC(f.shape, self.kernel_size, self.extend_scope, self.morph, self.device)
-        deformed_feature = dsc.deform_conv(f, offset, self.if_offset)
+        
+        # 🔥 DSC 객체 생성 없이 헬퍼 메서드 직접 호출
+        deformed_feature = self._deform_conv(f, offset, B, C, W, H)
+        
         x = self.dsc_conv_x(deformed_feature) if self.morph == 0 else self.dsc_conv_y(deformed_feature)
         return self.relu(self.gn(x))
 
+    def _deform_conv(self, input_tensor, offset, B, C, W, H):
+        y, x = self._coordinate_map_3D(offset, B, W, H)
+        # 🔥 최적화된 grid_sample 함수 호출
+        return self._bilinear_interpolate_with_grid_sample(input_tensor, y, x, B, C, W, H)
+
+    def _coordinate_map_3D(self, offset, B, W, H):
+        y_offset, x_offset = torch.split(offset, self.kernel_size, dim=1)
+
+        y_center = torch.arange(0, W, device=self.device).repeat(H).reshape(H, W).permute(1, 0).reshape(-1, W, H).repeat(self.kernel_size, 1, 1).float().unsqueeze(0)
+        x_center = torch.arange(0, H, device=self.device).repeat(W).reshape(W, H).reshape(-1, W, H).repeat(self.kernel_size, 1, 1).float().unsqueeze(0)
+
+        if self.morph == 0:
+            y = torch.linspace(0, 0, 1, device=self.device)
+            x = torch.linspace(-int(self.kernel_size // 2), int(self.kernel_size // 2), self.kernel_size, device=self.device)
+            y_grid, x_grid = torch.meshgrid(y, x, indexing='ij')
+            y_grid = y_grid.reshape(-1, 1).repeat(1, W * H).reshape(self.kernel_size, W, H).unsqueeze(0)
+            x_grid = x_grid.reshape(-1, 1).repeat(1, W * H).reshape(self.kernel_size, W, H).unsqueeze(0)
+
+            y_new = (y_center + y_grid).repeat(B, 1, 1, 1)
+            x_new = (x_center + x_grid).repeat(B, 1, 1, 1)
+
+            if self.if_offset:
+                # 🔥 for 루프를 torch.cumsum으로 대체 (속도 향상)
+                y_offset_permuted = y_offset.permute(1, 0, 2, 3) # [K, B, W, H]
+                center = self.kernel_size // 2
+
+                y_offset_fwd = torch.cumsum(y_offset_permuted[center:], dim=0)
+                y_offset_rev_flipped = torch.cumsum(torch.flip(y_offset_permuted[:center], dims=[0]), dim=0)
+                y_offset_rev = torch.flip(y_offset_rev_flipped, dims=[0])
+                
+                y_offset_fwd[0] = 0 # Center offset은 0
+                y_offset_new = torch.cat((y_offset_rev, y_offset_fwd), dim=0) # [K, B, W, H]
+                
+                y_new = y_new.add(y_offset_new.permute(1, 0, 2, 3).mul(self.extend_scope))
+
+            y_new = y_new.reshape(B, self.kernel_size, 1, W, H).permute(0, 3, 1, 4, 2).reshape(B, self.kernel_size * W, H)
+            x_new = x_new.reshape(B, self.kernel_size, 1, W, H).permute(0, 3, 1, 4, 2).reshape(B, self.kernel_size * W, H)
+            return y_new, x_new
+        
+        else: # morph == 1
+            y = torch.linspace(-int(self.kernel_size // 2), int(self.kernel_size // 2), self.kernel_size, device=self.device)
+            x = torch.linspace(0, 0, 1, device=self.device)
+            y_grid, x_grid = torch.meshgrid(y, x, indexing='ij')
+            y_grid = y_grid.reshape(-1, 1).repeat(1, W * H).reshape(self.kernel_size, W, H).unsqueeze(0)
+            x_grid = x_grid.reshape(-1, 1).repeat(1, W * H).reshape(self.kernel_size, W, H).unsqueeze(0)
+
+            y_new = (y_center + y_grid).repeat(B, 1, 1, 1)
+            x_new = (x_center + x_grid).repeat(B, 1, 1, 1)
+            
+            if self.if_offset:
+                # 🔥 for 루프를 torch.cumsum으로 대체 (속도 향상)
+                x_offset_permuted = x_offset.permute(1, 0, 2, 3) # [K, B, W, H]
+                center = self.kernel_size // 2
+                
+                x_offset_fwd = torch.cumsum(x_offset_permuted[center:], dim=0)
+                x_offset_rev_flipped = torch.cumsum(torch.flip(x_offset_permuted[:center], dims=[0]), dim=0)
+                x_offset_rev = torch.flip(x_offset_rev_flipped, dims=[0])
+
+                x_offset_fwd[0] = 0 # Center offset은 0
+                x_offset_new = torch.cat((x_offset_rev, x_offset_fwd), dim=0) # [K, B, W, H]
+
+                x_new = x_new.add(x_offset_new.permute(1, 0, 2, 3).mul(self.extend_scope))
+            
+            y_new = y_new.reshape(B, 1, self.kernel_size, W, H).permute(0, 3, 1, 4, 2).reshape(B, W, self.kernel_size * H)
+            x_new = x_new.reshape(B, 1, self.kernel_size, W, H).permute(0, 3, 1, 4, 2).reshape(B, W, self.kernel_size * H)
+            return y_new, x_new
+
+    def _bilinear_interpolate_with_grid_sample(self, input_feature, y, x, B, C, W, H):
+        # input_feature: [B, C, W, H]
+        # y: [B, K*W, H] (morph=0) or [B, W, K*H] (morph=1)
+        # x: [B, K*W, H] (morph=0) or [B, W, K*H] (morph=1)
+        
+        # ⚠️ nan_to_num 제거! NaN 발생 시 학습이 중단되어야 원인을 찾을 수 있음.
+
+        # 🔥 F.grid_sample을 위한 좌표 정규화 ([-1, 1] 범위로)
+        # grid_sample의 'x' 좌표 (W_out 차원)는 H (height)를 기준으로,
+        # 'y' 좌표 (H_out 차원)는 W (width)를 기준으로 정규화합니다.
+        y_norm = (y / (W - 1)) * 2 - 1
+        x_norm = (x / (H - 1)) * 2 - 1
+
+        # F.grid_sample은 [B, H_out, W_out, 2] 형태의 grid를 기대합니다.
+        if self.morph == 0:
+            # y, x shape: [B, K*W, H]
+            # H_out = K*W, W_out = H
+            grid = torch.stack((x_norm, y_norm), dim=-1) # Shape: [B, K*W, H, 2]
+        else: # morph == 1
+            # y, x shape: [B, W, K*H]
+            # H_out = W, W_out = K*H
+            grid = torch.stack((x_norm, y_norm), dim=-1) # Shape: [B, W, K*H, 2]
+
+        # 🔥 F.grid_sample 실행
+        outputs = F.grid_sample(
+            input_feature, 
+            grid, 
+            mode='bilinear', 
+            padding_mode='border', # 'border'는 clamp와 유사하게 동작
+            align_corners=True     # 수동 구현이 (0,0) (W-1, H-1)을 기준으로 했으므로 True
+        )
+        
+        # outputs shape은 [B, C, H_out, W_out]이므로,
+        # morph=0 -> [B, C, K*W, H]
+        # morph=1 -> [B, C, W, K*H]
+        # 이는 원본 코드의 최종 출력 형태와 일치하므로 추가 permute/reshape 불필요.
+        return outputs
+
 # =====================================================================================
-# 2. DSCUNet 빌딩 블록 (모든 파라미터 이름 및 전달 오류 수정됨)
+# 2. DSCUNet 빌딩 블록 (변경 사항 없음)
+# - DSConv의 __init__ 시그니처가 동일하므로 이 섹션은 수정할 필요가 없습니다.
 # =====================================================================================
 
 class DSCBlock(nn.Module):
     def __init__(self, conv_op, input_channels, output_channels, kernel_size, initial_stride, dsc_kernel_size, dsc_extend_scope, dsc_if_offset, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first, device):
         super().__init__()
         self.conv_standard = StackedConvBlocks(1, conv_op, input_channels, output_channels, kernel_size, initial_stride, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first)
+        # ✅ 수정된 DSConv 호출 (파라미터는 동일)
         self.dsc_x = DSConv(input_channels, output_channels, dsc_kernel_size, dsc_extend_scope, 0, dsc_if_offset, device)
         self.dsc_y = DSConv(input_channels, output_channels, dsc_kernel_size, dsc_extend_scope, 1, dsc_if_offset, device)
         self.conv_merge = StackedConvBlocks(1, conv_op, output_channels * 3, output_channels, 1, 1, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first)
@@ -193,7 +189,7 @@ class StackedDSCBlocks(nn.Module):
         return self.convs(x)
 
 # =====================================================================================
-# 3. nnU-Net Encoder와 Decoder (모든 오류 수정됨)
+# 3. nnU-Net Encoder와 Decoder (변경 사항 없음)
 # =====================================================================================
 
 class DSCEncoder(nn.Module):
@@ -201,7 +197,6 @@ class DSCEncoder(nn.Module):
         super().__init__()
         self.device = device # DSCDecoder가 접근할 수 있도록 self.device에 저장
         
-        # ... (나머지 __init__ 코드는 이전과 동일)
         if isinstance(kernel_sizes, int): kernel_sizes = [kernel_sizes] * n_stages
         if isinstance(features_per_stage, int): features_per_stage = [features_per_stage] * n_stages
         if isinstance(n_conv_per_stage, int): n_conv_per_stage = [n_conv_per_stage] * n_stages
@@ -215,11 +210,12 @@ class DSCEncoder(nn.Module):
             if pool in ['max', 'avg'] and any(i != 1 for i in (strides[s] if isinstance(strides[s], (tuple, list)) else [strides[s]])):
                 stage_modules.append(get_matching_pool_op(conv_op, pool_type=pool)(kernel_size=strides[s], stride=strides[s]))
             
+            # ✅ 수정된 StackedDSCBlocks 호출 (파라미터는 동일)
             stage_modules.append(StackedDSCBlocks(n_conv_per_stage[s], conv_op, current_in_channels, features_per_stage[s], kernel_sizes[s], conv_stride, dsc_kernel_size, dsc_extend_scope, dsc_if_offset, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first, device))
             stages.append(nn.Sequential(*stage_modules))
             current_in_channels = features_per_stage[s]
 
-        self.stages = nn.ModuleList(stages) # Sequential 대신 ModuleList로 변경하여 forward 수정
+        self.stages = nn.ModuleList(stages)
         self.output_channels = features_per_stage
         self.strides = [maybe_convert_scalar_to_list(conv_op, i) for i in strides]
         self.return_skips = return_skips
@@ -259,46 +255,43 @@ class DSCDecoder(nn.Module):
         norm_op, norm_op_kwargs = (encoder.norm_op, encoder.norm_op_kwargs) if norm_op is None else (norm_op, norm_op_kwargs)
         dropout_op, dropout_op_kwargs = (encoder.dropout_op, encoder.dropout_op_kwargs) if dropout_op is None else (dropout_op, dropout_op_kwargs)
         nonlin, nonlin_kwargs = (encoder.nonlin, encoder.nonlin_kwargs) if nonlin is None else (nonlin, nonlin_kwargs)
-        device = encoder.device
+        device = encoder.device # ✅ Encoder로부터 device 정보 가져오기
 
         self.stages = nn.ModuleList()
         self.transpconvs = nn.ModuleList()
-        self.seg_layers = nn.ModuleList() # final_seg_layer 제거
+        self.seg_layers = nn.ModuleList()
 
-        # ✅ 수정: UNetDecoder와 동일하게 모든 스테이지에 대해 seg_layer 생성
         for s in range(1, n_stages_encoder):
             input_features_below, input_features_skip = encoder.output_channels[-s], encoder.output_channels[-(s + 1)]
             self.transpconvs.append(transpconv_op(input_features_below, input_features_skip, encoder.strides[-s], encoder.strides[-s], bias=conv_bias))
+            
+            # ✅ 수정된 StackedDSCBlocks 호출 (파라미터는 동일)
             self.stages.append(StackedDSCBlocks(n_conv_per_stage[s-1], encoder.conv_op, 2 * input_features_skip, input_features_skip, encoder.kernel_sizes[-(s+1)], 1, encoder.dsc_kernel_size, encoder.dsc_extend_scope, encoder.dsc_if_offset, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first, device))
             
-            # 모든 스테이지에 대해 seg_layer 추가 (UNetDecoder 방식)
             self.seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
 
     def forward(self, skips):
         lres_input = skips[-1]
         seg_outputs = []
         
-        # ✅ 수정: UNetDecoder의 forward 로직과 완전히 동일하게 변경
         for s in range(len(self.stages)):
             x = self.transpconvs[s](lres_input)
             x = torch.cat((x, skips[-(s+2)]), 1)
             x = self.stages[s](x)
             
-            # UNetDecoder 로직: deep_supervision이 켜져 있거나, 마지막 스테이지일 때만 출력 추가
             if self.deep_supervision:
                 seg_outputs.append(self.seg_layers[s](x))
-            elif s == (len(self.stages) - 1): # deep_supervision 꺼져있으면 마지막만 추가
-                 seg_outputs.append(self.seg_layers[-1](x)) # self.seg_layers[-1] 사용
-                 
+            elif s == (len(self.stages) - 1):
+                seg_outputs.append(self.seg_layers[-1](x))
+                
             lres_input = x
         
-        # 고해상도 출력이 맨 앞에 오도록 리스트 뒤집기 (UNetDecoder 방식)
         seg_outputs = seg_outputs[::-1]
         
-        # deep_supervision 플래그에 따라 반환 값 결정 (UNetDecoder 방식)
         return seg_outputs if self.deep_supervision else seg_outputs[0]
+
 # =====================================================================================
-# 4. 최종 DSCUNet 모델 (유연한 파라미터 처리 및 device 전달 기능 포함)
+# 4. 최종 DSCUNet 모델 (변경 사항 없음)
 # =====================================================================================
 
 class DSCUNet(nn.Module):
@@ -312,6 +305,7 @@ class DSCUNet(nn.Module):
         if conv_op is not nn.Conv2d:
             warnings.warn("DSCUNet is designed for 2D (nn.Conv2d) only.")
         
+        # ✅ 수정된 DSCEncoder 호출 (파라미터는 동일)
         self.encoder = DSCEncoder(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides, _n_conv_per_stage_encoder, dsc_kernel_size, dsc_extend_scope, dsc_if_offset, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, True, nonlin_first, 'conv', device)
         self.decoder = DSCDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision, nonlin_first)
 
@@ -323,10 +317,14 @@ class DSCUNet(nn.Module):
         InitWeights_He(1e-2)(module)
 
 # =====================================================================================
-# 5. 테스트 코드
+# 5. 테스트 코드 (⚠️ 디버깅 코드 추가)
 # =====================================================================================
 
 if __name__ == '__main__':
+    # ⚠️ NaN/Inf 발생 시 즉시 오류를 발생시켜 원인을 추적합니다.
+    # ⚠️ 성능이 오르지 않는 문제를 디버깅하기 위해 꼭 필요합니다.
+    torch.autograd.set_detect_anomaly(True)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🚀 DSCUNet 모델 테스트를 시작합니다. 사용 장치: {device}")
 
@@ -356,7 +354,11 @@ if __name__ == '__main__':
 
     DSCUNet.initialize(model)
 
-    print("\nForward pass 실행 중...")
+    print("\nForward pass 실행 중 (anomaly detection 활성화됨)...")
+    # torch.no_grad()를 사용하면 역전파를 안하므로 anomaly detection이
+    # 큰 의미가 없을 수 있습니다. 실제 학습 시 (model.train() 및 loss.backward())에
+    # anomaly detection이 진가를 발휘합니다.
+    # 여기서는 순전파 자체의 오류를 잡기 위해 실행합니다.
     with torch.no_grad():
         outputs = model(data)
     print("Forward pass 완료!")
@@ -376,3 +378,12 @@ if __name__ == '__main__':
     
     assert final_output_shape == expected_shape, "최종 출력 shape가 예상과 다릅니다!"
     print("\n✅ DSCUNet 모델 테스트 성공!")
+    
+    print("\n---")
+    print("💡 참고: `torch.autograd.set_detect_anomaly(True)`가 활성화되었습니다.")
+    print("   실제 학습(loss.backward()) 중에 NaN이 발생하면 프로그램이 중단되고")
+    print("   오류 추적 정보(traceback)가 출력될 것입니다.")
+    print("\n   만약 `NaN`으로 인한 오류가 계속 발생한다면,")
+    print("   1. Gradient Clipping을 적용해 보세요 (예: `torch.nn.utils.clip_grad_norm_`)")
+    print("   2. `DSConv._coordinate_map_3D`에서 `cumsum` 이후 `tanh`를 추가하여 offset 범위를 제한해 보세요.")
+    print("---")
