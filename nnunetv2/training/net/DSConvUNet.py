@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 
 # =====================================================================================
 # 1. Dynamic Snake Convolution (수정된 버전)
-# - ✅ [수정] BatchNorm2d -> GroupNorm(2, 2*kernel_size)
+# - [수정] BatchNorm2d -> GroupNorm(2, 2*kernel_size)
 # - DSC 클래스 제거, DSConv 모듈로 통합
 # - for 루프 -> torch.cumsum
 # - 수동 interpolate -> F.grid_sample
@@ -28,7 +28,7 @@ class DSConv(nn.Module):
         self.offset_conv = nn.Conv2d(in_ch, 2 * kernel_size, 3, padding=1)
         
         # -----------------------------------------------------------------
-        # ✅ [수정] BatchNorm2d -> GroupNorm(2, ...)
+        # [수정] BatchNorm2d -> GroupNorm(2, ...)
         # 배치 크기 1에서 NaN을 유발하는 BatchNorm을 제거하고,
         # Y오프셋(K개), X오프셋(K개) 2개 그룹으로 나누는 GroupNorm으로 대체합니다.
         # self.bn = nn.BatchNorm2d(2 * kernel_size) # <-- [수정 전]
@@ -48,16 +48,16 @@ class DSConv(nn.Module):
         self.device = device
 
     def forward(self, f):
-        B, C, W, H = f.shape  # ✅ 입력 텐서에서 동적으로 Shape 가져오기
+        B, C, W, H = f.shape  # 입력 텐서에서 동적으로 Shape 가져오기
         offset = self.offset_conv(f)
         
         # -----------------------------------------------------------------
-        # ✅ [수정] self.bn -> self.gn_offset 사용
+        # [수정] self.bn -> self.gn_offset 사용
         # offset = torch.tanh(self.bn(offset)) # <-- [수정 전]
         offset = torch.tanh(self.gn_offset(offset)) # <-- [수정 후]
         # -----------------------------------------------------------------
         
-        # 🔥 DSC 객체 생성 없이 헬퍼 메서드 직접 호출
+        # DSC 객체 생성 없이 헬퍼 메서드 직접 호출
         deformed_feature = self._deform_conv(f, offset, B, C, W, H)
         
         x = self.dsc_conv_x(deformed_feature) if self.morph == 0 else self.dsc_conv_y(deformed_feature)
@@ -65,7 +65,7 @@ class DSConv(nn.Module):
 
     def _deform_conv(self, input_tensor, offset, B, C, W, H):
         y, x = self._coordinate_map_3D(offset, B, W, H)
-        # 🔥 최적화된 grid_sample 함수 호출
+        # 최적화된 grid_sample 함수 호출
         return self._bilinear_interpolate_with_grid_sample(input_tensor, y, x, B, C, W, H)
 
     def _coordinate_map_3D(self, offset, B, W, H):
@@ -85,7 +85,7 @@ class DSConv(nn.Module):
             x_new = (x_center + x_grid).repeat(B, 1, 1, 1)
 
             if self.if_offset:
-                # 🔥 for 루프를 torch.cumsum으로 대체 (속도 향상)
+                # for 루프를 torch.cumsum으로 대체 (속도 향상)
                 y_offset_permuted = y_offset.permute(1, 0, 2, 3) # [K, B, W, H]
                 center = self.kernel_size // 2
 
@@ -113,7 +113,7 @@ class DSConv(nn.Module):
             x_new = (x_center + x_grid).repeat(B, 1, 1, 1)
             
             if self.if_offset:
-                # 🔥 for 루프를 torch.cumsum으로 대체 (속도 향상)
+                # for 루프를 torch.cumsum으로 대체 (속도 향상)
                 x_offset_permuted = x_offset.permute(1, 0, 2, 3) # [K, B, W, H]
                 center = self.kernel_size // 2
                 
@@ -131,7 +131,7 @@ class DSConv(nn.Module):
             return y_new, x_new
 
     def _bilinear_interpolate_with_grid_sample(self, input_feature, y, x, B, C, W, H):
-        # ⚠️ nan_to_num은 디버깅을 위해 제거된 상태입니다.
+        # nan_to_num 제거거
         y_norm = (y / (W - 1)) * 2 - 1
         x_norm = (x / (H - 1)) * 2 - 1
 
@@ -157,7 +157,7 @@ class DSCBlock(nn.Module):
     def __init__(self, conv_op, input_channels, output_channels, kernel_size, initial_stride, dsc_kernel_size, dsc_extend_scope, dsc_if_offset, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first, device):
         super().__init__()
         self.conv_standard = StackedConvBlocks(1, conv_op, input_channels, output_channels, kernel_size, initial_stride, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first)
-        # ✅ 수정된 DSConv 호출 (파라미터는 동일)
+        # 수정된 DSConv 호출 (파라미터는 동일)
         self.dsc_x = DSConv(input_channels, output_channels, dsc_kernel_size, dsc_extend_scope, 0, dsc_if_offset, device)
         self.dsc_y = DSConv(input_channels, output_channels, dsc_kernel_size, dsc_extend_scope, 1, dsc_if_offset, device)
         self.conv_merge = StackedConvBlocks(1, conv_op, output_channels * 3, output_channels, 1, 1, conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first)
@@ -313,13 +313,13 @@ class DSCUNet(nn.Module):
 
 if __name__ == '__main__':
     
-    # ⚠️ [수정] 속도 측정을 위해 anomaly detection 비활성화
+    # [수정] 속도 측정을 위해 anomaly detection 비활성화
     # torch.autograd.set_detect_anomaly(True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🚀 DSCUNet 모델 테스트를 시작합니다. 사용 장치: {device}")
 
-    data = torch.rand((1, 1, 512, 512)).to(device) # ✅ 배치 크기 1로 테스트
+    data = torch.rand((1, 1, 512, 512)).to(device) # 배치 크기 1로 테스트
 
     model = DSCUNet(
         input_channels=1,
@@ -335,7 +335,7 @@ if __name__ == '__main__':
         dsc_extend_scope=1,
         dsc_if_offset=True,
         conv_bias=True,
-        norm_op=nn.InstanceNorm2d, # ✅ 배치 크기 1에 안전한 InstanceNorm
+        norm_op=nn.InstanceNorm2d, # 배치 크기 1에 안전한 InstanceNorm
         norm_op_kwargs={'eps': 1e-5, 'affine': True},
         nonlin=nn.LeakyReLU,
         nonlin_kwargs={'negative_slope': 1e-2, 'inplace': True},
